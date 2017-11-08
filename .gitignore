@@ -1,0 +1,9 @@
+.cache-main
+.classpath
+.project
+.worksheet
+bin
+target
+project/project
+project/target
+**/*.sc
