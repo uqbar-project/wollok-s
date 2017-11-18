@@ -1,7 +1,29 @@
 package org.uqbar.wollok
 
-import org.uqbar.wollok.model._
 import scala.util.{ Try => STry }
+
+import org.uqbar.wollok.model.Assignment
+import org.uqbar.wollok.model.Catch
+import org.uqbar.wollok.model.Class
+import org.uqbar.wollok.model.Constructor
+import org.uqbar.wollok.model.Environment
+import org.uqbar.wollok.model.FullyQualifiedReference
+import org.uqbar.wollok.model.If
+import org.uqbar.wollok.model.Literal
+import org.uqbar.wollok.model.LocalReference
+import org.uqbar.wollok.model.Method
+import org.uqbar.wollok.model.Module
+import org.uqbar.wollok.model.Name
+import org.uqbar.wollok.model.New
+import org.uqbar.wollok.model.Return
+import org.uqbar.wollok.model.Self
+import org.uqbar.wollok.model.Send
+import org.uqbar.wollok.model.Sentence
+import org.uqbar.wollok.model.Singleton
+import org.uqbar.wollok.model.Super
+import org.uqbar.wollok.model.Throw
+import org.uqbar.wollok.model.Try
+import org.uqbar.wollok.model.Variable
 
 class Interpreter(environment: Environment) {
   // TODO: filter what

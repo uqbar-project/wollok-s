@@ -9,8 +9,8 @@ object model {
   sealed trait Node {
     val id = Id.next
 
-    def parent(implicit environment: Environment): Option[Node] = environment.parenthood.get(id) flatMap { parentId => environment(parentId) }
-    def scope(implicit environment: Environment): Map[Name, Node] = environment.scopes(id).mapValues { id => environment(id).get }
+    def parent(implicit environment: Environment): Option[Node] = environment.parenthood.get(id) flatMap { parentId => environment[Node](parentId) }
+    def scope(implicit environment: Environment): Map[Name, Node] = environment.scopes(id).mapValues { id => environment[Node](id).get }
 
     def mapAccum[T](acum: T, acumTx: (T, Node) => T)(tx: (T, Node) => Node): (T, this.type) = {
       val next = tx(acum, this)
@@ -155,9 +155,10 @@ object model {
 
     lazy val scopes: Map[Id, Map[Name, Id]] = {
       def scopeContributions(node: Node): Map[Name, Id] = node match {
+        case node: Singleton                => if (node.name != "") Map(node.name -> node.id) else Map()
         case node: Referenceable            => Map(node.name -> node.id)
         case node: Import if node.isGeneric => apply[Node](node.reference).get.children.flatMap(scopeContributions).toMap
-        case node: Import                   => scopeContributions(this(node.reference).get)
+        case node: Import                   => scopeContributions(self[Node](node.reference).get)
         case _                              => Map()
       }
       def entries(inheritedScope: Map[Name, Id])(node: Node): Map[Id, Map[Name, Id]] = Map(node.id -> inheritedScope) ++ node.children.flatMap(entries(inheritedScope ++ node.children.flatMap(scopeContributions)))

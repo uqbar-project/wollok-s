@@ -1,6 +1,5 @@
 package org.uqbar.wollok
 
-import scala.io.Source
 import scala.language.implicitConversions
 import scala.util.parsing.combinator.RegexParsers
 
@@ -36,9 +35,9 @@ import model.Throw
 import model.Try
 import model.Variable
 
-object parser extends WollokParser
+object Parser extends Parser
 
-protected trait WollokParser extends RegexParsers {
+protected trait Parser extends RegexParsers {
 
   def apply(name: String, input: String) = parseFile(name, input)
 

@@ -1,8 +1,10 @@
 package org.uqbar.wollok
 
-import org.uqbar.wollok.model._
+import org.uqbar.wollok.model.Environment
+import org.uqbar.wollok.model.Member
+import org.uqbar.wollok.model.Package
 
-object linker {
+object Linker {
 
   def apply(packages: Package*): Environment = {
     def mergeInto(members: Seq[Member[Package]], isolated: Package): Seq[Member[Package]] = members

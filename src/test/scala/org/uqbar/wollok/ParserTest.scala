@@ -8,10 +8,34 @@ import org.scalatest.Matchers
 import org.scalatest.matchers.MatchResult
 import org.scalatest.matchers.Matcher
 
-import model._
-import sun.awt.X11.Separator
+import model.Assignment
+import model.Catch
+import model.Class
+import model.Closure
+import model.Constructor
+import model.Expression
+import model.Field
+import model.FullyQualifiedReference
+import model.If
+import model.Import
+import model.Literal
+import model.LocalReference
+import model.Method
+import model.Mixin
+import model.New
+import model.Package
+import model.Parameter
+import model.Program
+import model.Return
+import model.Send
+import model.Singleton
+import model.Super
+import model.Test
+import model.Throw
+import model.Try
+import model.Variable
 
-class parserTest extends FreeSpec with WollokParser with ParserMatchers[WollokParser] {
+class ParserTest extends FreeSpec with Parser with ParserMatchers[Parser] {
 
   "Wollok parser" - {
 
