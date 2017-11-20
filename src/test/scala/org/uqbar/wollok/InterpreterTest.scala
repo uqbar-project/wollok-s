@@ -4,29 +4,10 @@ import org.scalatest.FreeSpec
 import org.scalatest.Matchers
 
 class InterpreterTest extends FreeSpec with Matchers {
-  /*
-describe('Wollok interpreter', () => {
 
-  describe('Packages', () => {
+  "Wollok interpreter" - {
 
-    it('should interpret packages as nested fields in a hash', () => {
-      const jsEnvironment = interpret(langNatives)(link(
-        Package('a')(
-          Package('c')()
-        ),
-        Package('b')(
-          Package('d')()
-        )
-      ))
-
-      expect(jsEnvironment)
-        .to.have.property('a')
-        .and.also.to.have.nested.property('a.c')
-        .and.also.to.have.property('b')
-        .and.also.to.have.nested.property('b.d')
-    })
-
-  })
+    /*
 
   describe('Classes', () => {
     it('should interpret classes as js classes', () => {
@@ -539,4 +520,6 @@ describe('Wollok interpreter', () => {
 //
 // })
  */
+  }
+
 }

@@ -182,4 +182,5 @@ object model {
 // - Variables/Fields inmutables no inicializados
 // - LocalReferences fuera de scope
 // - FullyQualifiedReferences no en el ambiente
+// - Nadie tiene dos children con el mismo nombre
 

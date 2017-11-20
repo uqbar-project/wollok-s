@@ -1,6 +1,5 @@
 package org.uqbar.wollok
 
-import scala.util.parsing.combinator.Parsers
 import scala.util.parsing.input.CharSequenceReader
 
 import org.scalatest.FreeSpec
@@ -8,32 +7,8 @@ import org.scalatest.Matchers
 import org.scalatest.matchers.MatchResult
 import org.scalatest.matchers.Matcher
 
-import model.Assignment
-import model.Catch
-import model.Class
-import model.Closure
-import model.Constructor
-import model.Expression
-import model.Field
-import model.FullyQualifiedReference
-import model.If
-import model.Import
-import model.Literal
-import model.LocalReference
-import model.Method
-import model.Mixin
-import model.New
-import model.Package
-import model.Parameter
-import model.Program
-import model.Return
-import model.Send
-import model.Singleton
-import model.Super
-import model.Test
-import model.Throw
-import model.Try
-import model.Variable
+import model._
+import scala.util.parsing.combinator.Parsers
 
 class ParserTest extends FreeSpec with Parser with ParserMatchers[Parser] {
 
