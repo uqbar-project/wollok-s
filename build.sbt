@@ -9,4 +9,4 @@ libraryDependencies += "org.scala-lang.modules" %% "scala-parser-combinators" % 
 
 //enablePlugins(ScalaJSPlugin)
 
-scalacOptions := Seq("-deprecation", "-unchecked", "-feature")
+scalacOptions := Seq("-deprecation", "-unchecked", "-feature", "-Ypatmat-exhaust-depth", "1600")

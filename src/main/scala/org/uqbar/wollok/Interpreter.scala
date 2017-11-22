@@ -23,112 +23,195 @@ import org.uqbar.wollok.model.Singleton
 import org.uqbar.wollok.model.Super
 import org.uqbar.wollok.model.Throw
 import org.uqbar.wollok.model.Try
-import org.uqbar.wollok.model.Variable
+import org.uqbar.wollok.model._
 import org.uqbar.wollok.model.Expression
 import scala.util.Success
 import scala.annotation.tailrec
 import scala.util.Failure
+import org.uqbar.wollok.model.Field
+import scala.language.implicitConversions
 
-class Interpreter(environment: Environment) {
+case class ExceptionRaised(exception: Object, context: List[Frame]) extends RuntimeException
+case class Object(module: Module, fields: Map[Name, Object] = Map(), inner: Option[Any] = None)
 
-  type Stack[T] = List[T]
+case class Frame(locals: Map[Name, Object] = Map())
+
+class Interpreter(implicit environment: Environment) {
 
   def eval(fqr: FullyQualifiedReference) = ???
   // TODO: filter what
   def evalTests = ???
   def evalProgram = ???
+  def evalExpression(expression: Expression) = exec(expression)(Frame() :: Nil).map{ _._1 }
 
-  def evalExpression(expression: Expression) = executeAll(Result(Frame(pending = expression :: Nil) :: Nil)).map{ _.head.stack.head }
+  implicit def toTryMap[T, U](seq: Seq[(T, Result[U])]): Result[Map[T, U]] = seq.foldLeft(Result(Map[T, U]())){
+    case (acum, (key, value)) =>
+      for {
+        acum <- acum
+        value <- value
+      } yield acum.updated(key, value)
+  }
 
-  case class Object(module: Module, fields: Map[Name, Object] = Map(), inner: Option[Any] = None)
+  implicit class RuntimeModule(module: Module)(implicit environment: Environment) {
+    lazy val ancestors: Seq[Module] = {
+      val objectClass = environment[Class]("wollok.Object")
+      module +: (module match {
+        case _: Mixin | `objectClass` => Nil
+        case module: Class            => module.mixins.flatMap{ environment[Mixin](_).ancestors } ++ module.superclass.map{ environment[Class](_) }.getOrElse(objectClass).ancestors
+        case module: Singleton        => module.mixins.flatMap{ environment[Mixin](_).ancestors } ++ module.superclass.map{ case (fqr, _) => environment[Class](fqr) }.getOrElse(objectClass).ancestors
+      })
+    }
 
-  case class Frame(
-    stack:   Stack[Object]     = Nil,
-    locals:  Map[Name, Object] = Map(),
-    pending: Seq[Sentence]     = Nil,
-    catches: Seq[Catch]        = Nil,
-    always:  Seq[Sentence]     = Nil
-  )
+    // TODO: drop overrided
+    lazy val allMembers = module.ancestors.flatMap{ _.members: Seq[Member[_ <: Module]] }
+  }
 
-  def getLocal(context: Stack[Frame], name: Name) = context.collectFirst { case frame if frame.locals.isDefinedAt(name) => frame.locals(name) }.get
   def lookup(message: Name, arguments: Int, module: Module): Method = ???
   def superLookup(arguments: Int, superCall: Super): Method = ???
-  def constructorLookup(arguments: Int, className: FullyQualifiedReference): Constructor = ???
+  def constructorLookup(arguments: Int, module: Module): Constructor = module.allMembers.collectFirst{
+    case c: Constructor if c.parameters.size == arguments || c.parameters.size < arguments && c.parameters.last.hasVariableLength => c
+  }.get
 
-  @tailrec
-  private def executeAll(context: Result[Stack[Frame]]): Result[Stack[Frame]] = context match {
-    case failure: Failure[_] => failure
-    case Success(frames @ Frame(result :: _, _, Nil, _, _) :: Nil) => Result(frames)
-    case Success(frames) => executeAll(execute(frames))
+  def getLocal(name: Name)(implicit context: List[Frame]): Object = context.find(_.locals.isDefinedAt(name)).map(_.locals(name)).get
+  def updateLocal(name: Name, value: Object)(implicit context: List[Frame]): List[Frame] = {
+    val (init, head :: tail) = context.span(!_.locals.isDefinedAt(name))
+    init ::: head.copy(locals = head.locals.updated(name, value)) :: tail
   }
 
-  protected def execute(context: List[Frame]): Result[Stack[Frame]] = context match {
-    case Nil => Result { Nil.head }
+  def initializeInstance(module: Module, arguments: Seq[Object])(implicit context: List[Frame]): Result[Object] = {
+    val initialState: Result[Map[Name, Object]] = module.allMembers.collect{ case field @ Field(name, _, Some(value)) => name -> evalExpression(value) }
 
-    case (frame @ Frame(_, _, Variable(name, _, value) :: pending, _, _)) :: frames => for {
-      Frame(value :: rest, locals, pending, c, a) :: frames <- execute(frame.copy(pending = value.getOrElse(Literal(null)) :: pending) :: Nil)
-    } yield Frame(rest, locals.updated(name, value), pending, c, a) :: frames
+    for {
+      state <- initialState
+      instance = Object(module, state)
+      constructor = constructorLookup(arguments.size, instance.module)
+      constructorBody = constructor.body.get //TODO: Recursively call parent.
+      constructorLocals = Map("self" -> instance) ++ Map(constructor.parameters.map(_.name).zip(arguments.reverse): _*)
+      (_, ctx) <- exec(constructorBody)(Frame(locals = constructorLocals) :: context)
+    } yield getLocal("self")(ctx)
+  }
 
-    case Frame(stack, locals, Return(value) :: pending, catches, always) :: frames => for {
-      Frame(value :: _, _, _, c, a) :: next :: frames <- execute(Frame(stack, locals, value :: pending, catches, always) :: Nil)
-    } yield next.copy(stack = value :: next.stack) :: frames
+  def initializeSingleton(singleton: Singleton): Result[Object] = {
+    initializeInstance(singleton, singleton.superclass.map{ _._2.map{ evalExpression(_).get } }.getOrElse(Nil))(Nil)
+  }
 
-    case Frame(stack, locals, Assignment(reference, value) :: pending, catches, always) :: frames => for {
-      Frame(value :: rest, locals, pending, c, a) :: frames <- execute(Frame(stack, locals, value :: pending, catches, always) :: Nil)
-    } yield Frame(rest, locals.updated(reference.name, value), pending, c, a) :: frames
+  //TODO: Hoisting: What if an object constructor references an unitialized object
+  lazy val singletonInstances = {
+    def getSingletons(node: Node): Seq[Singleton] = node match {
+      case p: Package                      => p.children.flatMap{ getSingletons(_) }
+      case s: Singleton if s.name.nonEmpty => Seq(s)
+      case _                               => Seq()
+    }
 
-    case Frame(stack, locals, LocalReference(name) :: pending, catches, always) :: frames =>
-      Result(Frame(getLocal(context, name) :: stack, locals, pending, catches, always) :: frames)
+    val initializedInstances: Result[Map[Id, Object]] = getSingletons(environment).map{ singleton =>
+      singleton.id -> initializeSingleton(singleton)
+    }
 
-    case Frame(stack, locals, (fqr: FullyQualifiedReference) :: pending, catches, always) :: frames =>
-      Result(Frame(Object(environment[Singleton](fqr).get) :: stack, locals, pending, catches, always) :: frames)
+    initializedInstances
+  }
 
-    case Frame(stack, locals, Self :: pending, catches, always) :: frames =>
-      Result(Frame(getLocal(context, "self") :: stack, locals, pending, catches, always) :: frames)
+  lazy val nil = Object(environment[Class]("wollok.Null"))
 
-    case (frame @ Frame(stack, locals, Send(receiver, message, arguments) :: pending, catches, always)) :: frames => for {
-      Frame(stack, locals, pending, c, a) :: frames <- execute(frame.copy(pending = receiver +: arguments) :: Nil)
-      (args, rec :: rest) = stack.splitAt(arguments.size)
+  //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  // EXECUTION
+  //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+  def execAll(expressions: Seq[Expression])(implicit context: List[Frame]): Result[Seq[Object]] = (Result(Seq[Object]()) /: expressions){
+    case (prev, exp) => for {
+      responses <- prev
+      (next, _) <- exec(exp)
+    } yield responses :+ next
+  }
+
+  def exec(sentences: Seq[Sentence])(implicit context: List[Frame]): Result[(Object, List[Frame])] = (Result(nil, context) /: sentences) {
+    case (prev, sentence) => for {
+      (_, ctx) <- prev
+      next <- exec(sentence)(ctx)
+    } yield next
+  }
+
+  def exec(sentence: Sentence)(implicit context: List[Frame]): Result[(Object, List[Frame])] = sentence match {
+
+    case Variable(name, _, value) => for {
+      (value, _) <- exec(value getOrElse Literal(null))
+    } yield nil -> (context.head.copy(locals = context.head.locals + (name -> value)) :: context.tail)
+
+    case Return(value) => for {
+      (value, _) <- exec(value)
+    } yield value -> context.tail
+
+    case Assignment(reference, value) => for {
+      (value, _) <- exec(value)
+    } yield reference.target match {
+      case f: Variable => nil -> updateLocal(reference.name, value)
+      case f: Field =>
+        val self = getLocal("self")
+        val nextSelf = self.copy(fields = self.fields.updated(reference.name, value)) //TODO: un objeto guardado en dos referencias cambia su estado?
+        nil -> updateLocal("self", nextSelf)
+    }
+
+    case LocalReference(name)         => Result(getLocal(name), context)
+
+    case fqr: FullyQualifiedReference => Result(Object(environment[Singleton](fqr)), context)
+
+    case Self                         => Result(getLocal("self"), context)
+
+    case Send(receiver, message, arguments) => for {
+      rec :: args <- execAll(receiver +: arguments)
       method = lookup(message, arguments.size, rec.module)
       methodBody = method.body.get //TODO: Natives
-    } yield Frame(Nil, method.parameters.map(_.name).zip(args.reverse).toMap.updated("self", rec), methodBody) :: Frame(rest, locals, pending, c, a) :: frames
+      methodLocals = method.parameters.map(_.name).zip(args).toMap + ("self" -> rec)
+      next <- exec(methodBody)(Frame(methodLocals) :: context)
+    } yield next
 
-    case (frame @ Frame(stack, locals, (call @ Super(arguments)) :: pending, catches, always)) :: frames => for {
-      Frame(stack, locals, pending, c, a) :: frames <- execute(frame.copy(pending = arguments) :: Nil)
-      (args, rest) = stack.splitAt(arguments.size)
+    case call @ Super(arguments) => for {
+      args <- execAll(arguments)
       method = superLookup(arguments.size, call)
       methodBody = method.body.get //TODO: Natives
-    } yield Frame(Nil, method.parameters.map(_.name).zip(args.reverse).toMap.updated("self", locals("self")), methodBody) :: Frame(rest, locals, pending) :: frames
+      methodLocals = method.parameters.map(_.name).zip(args).toMap
+      next <- exec(methodBody)(Frame(locals = methodLocals) :: context)
+    } yield next
 
-    case (frame @ Frame(stack, locals, New(className, arguments) :: pending, catches, always)) :: frames => for {
-      Frame(stack, locals, pending, c, a) :: frames <- execute(frame.copy(pending = arguments) :: Nil)
-      (args, rec :: rest) = stack.splitAt(arguments.size)
-      constructor = constructorLookup(arguments.size, className)
-      constructorBody = constructor.body.get //TODO: Recursively call parent. Should we execute non-sentences as well?
-    } yield Frame(Nil, constructor.parameters.map(_.name).zip(args.reverse).toMap.updated("self", Object(environment[Class](className).get)), constructorBody ++ (Return(Self) +: Nil)) :: Frame(rest, locals, pending, c, a) :: frames
+    case New(className, arguments) => for {
+      args <- execAll(arguments)
+      instance <- initializeInstance(environment[Class](className), args)
+    } yield instance -> context
 
-    case (frame @ Frame(stack, locals, If(condition, thenBody, elseBody) :: pending, catches, always)) :: frames => for {
-      Frame(res :: stack, locals, _, c, a) :: frames <- execute(frame.copy(pending = condition :: Nil) :: Nil)
-    } yield Frame(Nil, Map(), if (res.inner == Some(true)) thenBody else elseBody) +: (Frame(stack, locals, pending, c, a) +: frames)
+    case If(condition, thenBody, elseBody) => for {
+      (bool, _) <- exec(condition)
+      next <- exec(if (bool.inner.exists{ _ == true }) thenBody else elseBody)(Frame() :: context)
+    } yield next
 
-    case (frame @ Frame(stack, locals, Literal(value) :: pending, catches, always)) :: frames =>
+    case Literal(value) =>
       val instance = value match {
-        case true         => Object(environment[Module]("wollok.Boolean").get, Map(), Some(true))
-        case false        => Object(environment[Module]("wollok.Boolean").get, Map(), Some(false))
-        case n: Int       => Object(environment[Module]("wollok.Number").get, Map(), Some(n))
-        case n: Double    => Object(environment[Module]("wollok.Number").get, Map(), Some(n))
-        case s: String    => Object(environment[Module]("wollok.String").get, Map(), Some(s))
-        case null         => Object(environment[Module]("wollok.Null").get, Map(), Some(null))
-        case o: Singleton => Object(o)
+        case _: Boolean   => Result(Object(environment[Module]("wollok.Boolean"), Map(), Some(value)))
+        case _: Int       => Result(Object(environment[Module]("wollok.Integer"), Map(), Some(value)))
+        case _: Double    => Result(Object(environment[Module]("wollok.Double"), Map(), Some(value)))
+        case _: String    => Result(Object(environment[Module]("wollok.String"), Map(), Some(value)))
+        case null         => Result(Object(environment[Module]("wollok.Null"), Map(), Some(value)))
+        case o: Singleton => initializeSingleton(o)
       }
-      Result(frame.copy(stack = instance :: frame.stack) :: frames)
+      instance map { _ -> context }
 
-    case (frame @ Frame(stack, locals, Throw(argument) :: pending, catches, always)) :: frames => for {
-      fs @ (Frame(exception :: stack, locals, pending, c, a) :: frames) <- execute(frame.copy(pending = argument :: pending) :: Nil)
-      (Frame(_, _, _, catches, always) :: rest) = fs.dropWhile { !_.catches.exists { _.parameterType.fold(true) { environment[Module](_).get == exception.module } } }
-      handler: Catch = catches.find(_.parameterType.fold(true) { environment[Module](_).get == exception.module }).get
-    } yield Frame(Nil, Map(handler.parameter.name -> exception), handler.body ++ always) :: frames
+    case Throw(argument) => for {
+      (exception, _) <- exec(argument)
+      error <- Failure(ExceptionRaised(exception, context))
+    } yield error
 
-    case frames @ Frame(stack, locals, Try(body, catches, always) :: pending, _, _) :: _ => Result(Frame(Nil, Map(), body, catches, always) :: frames)
+    case Try(body, catches, always) =>
+      val handled = exec(body)(Frame() :: context) match {
+        case fail @ Failure(ExceptionRaised(exception, Frame(failedLocals) :: failedContext)) =>
+          val handler = catches.find{ _.parameterType.fold(true){ environment[Module](_) == exception.module } }
+          handler.fold(fail: Result[(Object, List[Frame])]) {
+            case Catch(parameter, _, catchBody) => exec(catchBody)(Frame(failedLocals + (parameter.name -> exception)) :: failedContext)
+          }
+        case other => other
+      }
+
+      for {
+        (result, frames) <- handled
+        (_, ctx) <- exec(always.toList)(Frame() :: frames)
+      } yield result -> ctx
   }
+
 }

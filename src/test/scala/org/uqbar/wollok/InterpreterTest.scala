@@ -3,24 +3,208 @@ package org.uqbar.wollok
 import org.scalatest.FreeSpec
 import org.scalatest.Matchers
 
-class InterpreterTest extends FreeSpec with Matchers {
+import model._
+import org.scalatest.matchers.Matcher
+import org.scalatest.matchers.MatchResult
+import org.uqbar.wollok._
+import scala.language.implicitConversions
+
+class InterpreterTest extends FreeSpec with InterpreterMatchers {
+
+  val wre = Package("wollok", Nil, List(
+    Class("Integer"),
+    Class("Double"),
+    Class("Boolean"),
+    Class("String"),
+    Class("Null"),
+    Class("Object", members = Constructor() :: Nil)
+  ))
 
   "Wollok interpreter" - {
+
+    implicit val environment = Environment(wre :: Nil)
+
+    "literal" - {
+
+      "should interpret boolean literals as Wollok Booleans" in {
+        Literal(true) should beInterpretedTo (true)
+      }
+
+      "should interpret string literals as Wollok Strings" in {
+        Literal("foo") should beInterpretedTo ("foo")
+      }
+
+      "should interpret null literals as Wollok Null" in {
+        Literal(null) should beInterpretedTo (toObject(null))
+      }
+
+      "should interpret round number literals as Wollok Integers" in {
+        Literal(1) should beInterpretedTo (1)
+      }
+
+      "should interpret non-round number literals as Wollok Doubles" in {
+        Literal(1.0) should beInterpretedTo (1.0)
+      }
+
+      "should interpret object literals as initialized instances" in {
+
+        implicit val environment = Environment(List(
+          wre,
+          Package("p", Nil, List(
+            Class("C", members = List(
+              Field("g", false, Some(Literal(2))),
+              Field("h", true, None),
+              Constructor(Parameter("_h") :: Nil, body = Some(List(
+                Assignment(LocalReference("h"), LocalReference("_h"))
+              )))
+            ))
+          ))
+        ))
+
+        val singleton = Singleton("", Some("p.C", Literal(3) :: Nil), Nil, Field("f", true, Some(Literal(1))) :: Nil)
+
+        Literal(singleton) should beInterpretedTo (Object(singleton, Map("f" -> 1, "g" -> 2, "h" -> 3), None))
+      }
+
+    }
+
+    "if" - {
+
+      "with truthy condition should evaluate it's then-body without evaluating it's else-body" in {
+        val expression = If(Literal(true), Literal(1) :: Nil, Throw(New("Error")) :: Nil)
+        expression should beInterpretedTo (1)
+      }
+
+      "with falsy condition should evaluate it's else-body without evaluating it's then-body" in {
+        val expression = If(Literal(false), Throw(New("Error")) :: Nil, Literal(1) :: Nil)
+        expression should beInterpretedTo (1)
+      }
+
+    }
+
+    "assignment" - {
+
+      "should change mutable local reference's value" in {
+
+        Seq(
+          Variable("x", false, Some(Literal(0))),
+          Assignment(LocalReference("x"), Literal(1)),
+          LocalReference("x")
+        ) should beSequentiallyInterpretedTo (1)
+
+      }
+    }
+
+    "throw" - {
+
+      "should interpret non-failing tries with catches and no always clauses to be the try body result, ignoring catches" in {
+        Seq(
+          Variable("x", false, Some(Literal(0))),
+          Try(List(
+            Assignment(LocalReference("x"), Literal(7))
+          ), List(
+            Catch(Parameter("e"), None, List(
+              Assignment(LocalReference("x"), Literal(1))
+            ))
+          )),
+          LocalReference("x")
+        ) should beSequentiallyInterpretedTo (1)
+      }
+
+      /*
+      it('should interpret non-failing tries with catches and always clauses to be the always body result after executing the try body, ignoring catches', () => {
+        expectInterpretationOfExpressions(
+          VariableDeclaration('x', true, Literal(0)),
+          Try(Assignment(Reference('x'), Literal(7)))(Catch(Parameter('e'))(Assignment(Reference('x'), Literal(1))))(Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))),
+          Reference('x')
+        ).to.have.property('$inner', 8)
+      })
+
+      it('should interpret non-failing tries with no catches and always clauses to be the always body result after executing the try body', () => {
+        expectInterpretationOfExpressions(
+          VariableDeclaration('x', true, Literal(0)),
+          Try(Assignment(Reference('x'), Literal(7)))()(Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))),
+          Reference('x')
+        ).to.have.property('$inner', 8)
+      })
+
+      it('should interpret failing tries with matching catch and no always clauses to be the catch result, ignoring try body after error', () => {
+        expectInterpretationOfExpressions(
+          VariableDeclaration('x', true, Literal(0)),
+          Try(Throw(New(Reference('Exception'))()), Assignment(Reference('x'), Literal(7)))(Catch(Parameter('e'))(Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))))(),
+          Reference('x')
+        ).to.have.property('$inner', 1)
+      })
+
+      it('should interpret failing tries with matching catch and always clauses to be the catch result, ignoring try body after error but after executing the always', () => {
+        expectInterpretationOfExpressions(
+          VariableDeclaration('x', true, Literal(0)),
+          Try(Throw(New(Reference('Exception'))()), Assignment(Reference('x'), Literal(7)))(Catch(Parameter('e'))(Assignment(Reference('x'), Send(Reference('x'), '*')(Literal(2)))))(Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))),
+          Reference('x')
+        ).to.have.property('$inner', 2)
+      })
+
+      it('should interpret failing tries with no catches and always clauses to propagate the error, ignoring try body after error but after executing the always', () => {
+        expectInterpretationOfExpressions(
+          VariableDeclaration('x', true, Literal(0)),
+          Try(
+            Try(
+              Throw(New(Reference('Exception'))()), Assignment(Reference('x'), Literal(7))
+            )(
+            )(
+              Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))
+            ),
+          )(
+            Catch(Parameter('e'))(
+              Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))
+            )
+          )(
+          ),
+          Reference('x')
+        ).to.have.property('$inner', 2)
+      })
+
+      it('should interpret failing tries with no matching catches to propagate the error, ignoring try body after error', () => {
+        expectInterpretationOfExpressions(
+          VariableDeclaration('x', true, Literal(0)),
+          Try(
+            Try(
+              Throw(New(Reference('Exception'))()),
+              Assignment(Reference('x'), Literal(7))
+            )(
+              Catch(Parameter('e'), Reference('StackOverflowException'))(
+                Assignment(Reference('x'), Literal(5))
+              )
+            )(
+            )
+          )(
+            Catch(Parameter('e'))(
+              Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))
+            )
+          )(
+          ),
+          Reference('x')
+        ).to.have.property('$inner', 1)
+      })
+
+      it('should interpret failing tries with multiple matching catches to the result of the first one, ignoring try body after error', () => {
+        expectInterpretationOfExpressions(
+          VariableDeclaration('x'),
+          Try(Throw(New(Reference('Exception'))()), Assignment(Reference('x'), Literal(7)))(
+            Catch(Parameter('e'), Reference('StackOverflowException'))(Assignment(Reference('x'), Literal(5))),
+            Catch(Parameter('e'), Reference('Exception'))(Assignment(Reference('x'), Literal(2))),
+            Catch(Parameter('e'))(Assignment(Reference('x'), Literal(6)))
+          )(),
+          Reference('x')
+        ).to.have.property('$inner', 2)
+      })
+
+       * */
+    }
 
     /*
 
   describe('Classes', () => {
-    it('should interpret classes as js classes', () => {
-      const e = link(wre,
-        Package('p')(
-          Class('C')()()
-        )
-      );
-      const jsEnvironment = interpret(langNatives)(e)
-
-      expect(jsEnvironment)
-        .to.have.nested.property('p.C').that.is.a('function')
-    })
 
     it('should provide instances with their methods', () => {
       const e = link(wre,
@@ -281,72 +465,6 @@ class InterpreterTest extends FreeSpec with Matchers {
 
   })
 
-  describe('literals', () => {
-
-    it('should interpret boolean literals as Booleans', () => {
-      const e = link(wre, Package('p')(Singleton('s')()(Field('f', false, Literal(true)))))
-
-      expect(interpret(langNatives)(e).p.s.f)
-        .to.have.nested.property('constructor.name', '$Boolean')
-        .and.also.have.property('$inner', true)
-    })
-
-    it('should interpret string literals as $String', () => {
-      const e = link(wre, Package('p')(Singleton('s')()(Field('f', false, Literal('foo')))))
-
-      expect(interpret(langNatives)(e).p.s.f)
-        .to.have.nested.property('constructor.name', '$String')
-        .and.also.have.property('$inner', 'foo')
-    })
-
-    it('should interpret null literals as null', () => {
-      const e = link(wre, Package('p')(Singleton('s')()(Field('f', false, Literal(null)))))
-
-      expect(interpret(langNatives)(e).p.s.f).to.be.null
-    })
-
-    it('should interpret list literals as Lists', () => {
-      const e = link(wre, Package('p')(Singleton('s')()(Field('f', false, List(Literal(1), Literal(2), Literal(3))))))
-
-      expect(interpret(langNatives)(e).p.s.f)
-        .to.satisfy(list => list.size().$inner === 3)
-        .and.to.satisfy(list => list.get(0).$inner === 1)
-        .and.to.satisfy(list => list.get(1).$inner === 2)
-        .and.to.satisfy(list => list.get(2).$inner === 3)
-    })
-
-    it('should interpret round number literals as Integers', () => {
-      const e = link(wre, Package('p')(Singleton('s')()(Field('f', false, Literal(5)))))
-
-      expect(interpret(langNatives)(e).p.s.f)
-        .to.have.nested.property('constructor.name', 'Integer')
-        .and.also.have.property('$inner', 5)
-    })
-
-    it('should interpret non-round number literals as Doubles', () => {
-      const e = link(wre, Package('p')(Singleton('s')()(Field('f', false, Literal(5.7)))))
-
-      expect(interpret(langNatives)(e).p.s.f)
-        .to.have.nested.property('constructor.name', 'Double')
-        .and.also.have.property('$inner', 5.7)
-    })
-
-    it('should interpret closures without parameters', () => {
-      const e = link(wre, Package('p')(Singleton('s')()(Field('f', false, Send(Closure()(Literal(5)), 'apply')()))))
-
-      expect(interpret(langNatives)(e).p.s.f)
-        .to.have.property('$inner', 5)
-    })
-
-    it('should interpret closures with parameters', () => {
-      const e = link(wre, Package('p')(Singleton('s')()(Field('f', false, Send(Closure(Parameter('p'))(Reference('p')), 'apply')(Literal(5))))))
-
-      expect(interpret(langNatives)(e).p.s.f)
-        .to.have.property('$inner', 5)
-    })
-
-  })
-
   describe('expressions', () => {
 
     function expectInterpretationOfExpressions(...expressions) {
@@ -361,105 +479,6 @@ class InterpreterTest extends FreeSpec with Matchers {
           VariableDeclaration('x', true, Literal(5)),
           Reference('x')
         ).to.have.property('$inner', 5)
-      })
-
-    })
-
-    describe('try-catch-always', () => {
-
-      it('should interpret non-failing tries with catches and no always clauses to be the try body result, ignoring catches', () => {
-        expectInterpretationOfExpressions(
-          VariableDeclaration('x', true, Literal(0)),
-          Try(Assignment(Reference('x'), Literal(7)))(Catch(Parameter('e'))(Assignment(Reference('x'), Literal(1))))(),
-          Reference('x')
-        ).to.have.property('$inner', 7)
-      })
-
-      it('should interpret non-failing tries with catches and always clauses to be the always body result after executing the try body, ignoring catches', () => {
-        expectInterpretationOfExpressions(
-          VariableDeclaration('x', true, Literal(0)),
-          Try(Assignment(Reference('x'), Literal(7)))(Catch(Parameter('e'))(Assignment(Reference('x'), Literal(1))))(Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))),
-          Reference('x')
-        ).to.have.property('$inner', 8)
-      })
-
-      it('should interpret non-failing tries with no catches and always clauses to be the always body result after executing the try body', () => {
-        expectInterpretationOfExpressions(
-          VariableDeclaration('x', true, Literal(0)),
-          Try(Assignment(Reference('x'), Literal(7)))()(Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))),
-          Reference('x')
-        ).to.have.property('$inner', 8)
-      })
-
-      it('should interpret failing tries with matching catch and no always clauses to be the catch result, ignoring try body after error', () => {
-        expectInterpretationOfExpressions(
-          VariableDeclaration('x', true, Literal(0)),
-          Try(Throw(New(Reference('Exception'))()), Assignment(Reference('x'), Literal(7)))(Catch(Parameter('e'))(Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))))(),
-          Reference('x')
-        ).to.have.property('$inner', 1)
-      })
-
-      it('should interpret failing tries with matching catch and always clauses to be the catch result, ignoring try body after error but after executing the always', () => {
-        expectInterpretationOfExpressions(
-          VariableDeclaration('x', true, Literal(0)),
-          Try(Throw(New(Reference('Exception'))()), Assignment(Reference('x'), Literal(7)))(Catch(Parameter('e'))(Assignment(Reference('x'), Send(Reference('x'), '*')(Literal(2)))))(Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))),
-          Reference('x')
-        ).to.have.property('$inner', 2)
-      })
-
-      it('should interpret failing tries with no catches and always clauses to propagate the error, ignoring try body after error but after executing the always', () => {
-        expectInterpretationOfExpressions(
-          VariableDeclaration('x', true, Literal(0)),
-          Try(
-            Try(
-              Throw(New(Reference('Exception'))()), Assignment(Reference('x'), Literal(7))
-            )(
-            )(
-              Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))
-            ),
-          )(
-            Catch(Parameter('e'))(
-              Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))
-            )
-          )(
-          ),
-          Reference('x')
-        ).to.have.property('$inner', 2)
-      })
-
-      it('should interpret failing tries with no matching catches to propagate the error, ignoring try body after error', () => {
-        expectInterpretationOfExpressions(
-          VariableDeclaration('x', true, Literal(0)),
-          Try(
-            Try(
-              Throw(New(Reference('Exception'))()),
-              Assignment(Reference('x'), Literal(7))
-            )(
-              Catch(Parameter('e'), Reference('StackOverflowException'))(
-                Assignment(Reference('x'), Literal(5))
-              )
-            )(
-            )
-          )(
-            Catch(Parameter('e'))(
-              Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))
-            )
-          )(
-          ),
-          Reference('x')
-        ).to.have.property('$inner', 1)
-      })
-
-      it('should interpret failing tries with multiple matching catches to the result of the first one, ignoring try body after error', () => {
-        expectInterpretationOfExpressions(
-          VariableDeclaration('x'),
-          Try(Throw(New(Reference('Exception'))()), Assignment(Reference('x'), Literal(7)))(
-            Catch(Parameter('e'), Reference('StackOverflowException'))(Assignment(Reference('x'), Literal(5))),
-            Catch(Parameter('e'), Reference('Exception'))(Assignment(Reference('x'), Literal(2))),
-            Catch(Parameter('e'))(Assignment(Reference('x'), Literal(6)))
-          )(),
-          Reference('x')
-        ).to.have.property('$inner', 2)
       })
 
     })
@@ -491,19 +510,9 @@ class InterpreterTest extends FreeSpec with Matchers {
 
 // })
 
-
-//-------------------------------------------------------------------------------------------------------------------------------
-// EXPRESSIONS
-//-------------------------------------------------------------------------------------------------------------------------------
-
 // [New('Set')(List(Literal(1), Literal(2))), new Set([1, 2])],
 
-
-
 // TODO: Super
-
-// [If(Literal(true))(Literal(1))(Literal(2)), 1],
-// [If(Literal(false))(Literal(1))(Literal(2)), 2],
 
 // [Try(Literal(1))(Catch(Parameter('e'))(Literal(2)))(), 1],
 // [Try(Literal(1))()(Literal(3)), 3],
@@ -520,6 +529,45 @@ class InterpreterTest extends FreeSpec with Matchers {
 //
 // })
  */
+  }
+
+  implicit def toObject(value: Any)(implicit environment: Environment): Object = value match {
+    case value: Boolean => Object(environment[Module]("wollok.Boolean"), Map(), Some(value))
+    case value: Int     => Object(environment[Module]("wollok.Integer"), Map(), Some(value))
+    case value: Double  => Object(environment[Module]("wollok.Double"), Map(), Some(value))
+    case value: String  => Object(environment[Module]("wollok.String"), Map(), Some(value))
+    case null           => Object(environment[Module]("wollok.Null"), Map(), Some(value))
+  }
+}
+
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// MATCHERS
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+trait InterpreterMatchers extends Matchers {
+
+  case class beInterpretedTo(expected: Object)(implicit environment: Environment) extends Matcher[Expression] {
+    def apply(target: Expression) = {
+      val result = new Interpreter()(environment).evalExpression(target)
+
+      MatchResult(
+        result.isSuccess && result.get == expected,
+        if (result.isSuccess) s"Interpreted result ${result.get} did not equal $expected" else s"execution failed: ${result}",
+        if (result.isSuccess) s"Interpreted result ${result.get} was equal to $expected" else s"execution failed: ${result}"
+      )
+    }
+  }
+
+  case class beSequentiallyInterpretedTo(expected: Object)(implicit environment: Environment) extends Matcher[Seq[Sentence]] {
+    def apply(target: Seq[Sentence]) = {
+      val result = new Interpreter()(environment).exec(target)(Frame() :: Nil)
+
+      MatchResult(
+        result.isSuccess && result.get._1 == expected,
+        if (result.isSuccess) s"Interpreted result ${result.get._1} did not equal $expected" else s"execution failed: ${result}",
+        if (result.isSuccess) s"Interpreted result ${result.get._1} was equal to $expected" else s"execution failed: ${result}"
+      )
+    }
   }
 
 }

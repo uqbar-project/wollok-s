@@ -9,8 +9,8 @@ object model {
   sealed trait Node {
     val id = Id.next
 
-    def parent(implicit environment: Environment): Option[Node] = environment.parenthood.get(id) flatMap { parentId => environment[Node](parentId) }
-    def scope(implicit environment: Environment): Map[Name, Node] = environment.scopes(id).mapValues { id => environment[Node](id).get }
+    def parent(implicit environment: Environment): Option[Node] = environment.parenthood.get(id) map { parentId => environment[Node](parentId) }
+    def scope(implicit environment: Environment): Map[Name, Node] = environment.scopes(id).mapValues { id => environment[Node](id) }
 
     def mapAccum[T](acum: T, acumTx: (T, Node) => T)(tx: (T, Node) => Node): (T, this.type) = {
       val next = tx(acum, this)
@@ -76,7 +76,7 @@ object model {
 
   sealed trait Referenceable extends Node { def name: Name }
   sealed trait Member[-T <: Node] extends Node
-  sealed trait Module extends Member[Package] with Referenceable
+  sealed trait Module extends Member[Package] with Referenceable { def members: Seq[Member[this.type]] }
   sealed trait Sentence extends Node
   sealed trait Expression extends Sentence
   sealed trait Reference extends Expression { def target(implicit environment: Environment): Node }
@@ -92,7 +92,7 @@ object model {
     implicit def fromString(s: String) = FullyQualifiedReference(s.split('.').toList)
   }
   case class FullyQualifiedReference(name: Seq[Name]) extends Reference {
-    def target(implicit environment: Environment): Node = environment(this).get
+    def target(implicit environment: Environment): Node = environment(this)
   }
 
   case class Package(name: Name, imports: Seq[Import] = Nil, members: Seq[Member[Package]] = Nil) extends Member[Package] with Referenceable
@@ -140,8 +140,12 @@ object model {
   case class Environment(members: Seq[Member[Package]] = Nil) extends Node {
     implicit val self = this
 
-    def apply[T <: Node](id: Id) = cache.get(id).asInstanceOf[Option[T]]
-    def apply[T <: Node](fqr: FullyQualifiedReference) = (Option[Node](this) /: fqr.name) { case (parent, step) => parent.flatMap { _.children.collectFirst { case child: Referenceable if child.name == step => child } } }.asInstanceOf[Option[T]]
+    def apply[T <: Node](id: Id) = cache(id).asInstanceOf[T]
+    def apply[T <: Node](fqr: FullyQualifiedReference) = ((this: Node) /: fqr.name) {
+      case (parent, step) => parent.children.collectFirst { case child: Referenceable if child.name == step => child } getOrElse {
+        throw new RuntimeException(s"Reference to missing module ${fqr.name.mkString(".")}")
+      }
+    }.asInstanceOf[T]
 
     lazy val cache: Map[Id, Node] = {
       def entries(node: Node): Seq[(Id, Node)] = (node.id -> node) +: node.children.flatMap(entries)
@@ -157,8 +161,8 @@ object model {
       def scopeContributions(node: Node): Map[Name, Id] = node match {
         case node: Singleton                => if (node.name != "") Map(node.name -> node.id) else Map()
         case node: Referenceable            => Map(node.name -> node.id)
-        case node: Import if node.isGeneric => apply[Node](node.reference).get.children.flatMap(scopeContributions).toMap
-        case node: Import                   => scopeContributions(self[Node](node.reference).get)
+        case node: Import if node.isGeneric => apply[Node](node.reference).children.flatMap(scopeContributions).toMap
+        case node: Import                   => scopeContributions(self[Node](node.reference))
         case _                              => Map()
       }
       def entries(inheritedScope: Map[Name, Id])(node: Node): Map[Id, Map[Name, Id]] = Map(node.id -> inheritedScope) ++ node.children.flatMap(entries(inheritedScope ++ node.children.flatMap(scopeContributions)))
@@ -180,7 +184,14 @@ object model {
 // - Try sin catch ni always
 // - Variables/Fields no referenciados
 // - Variables/Fields inmutables no inicializados
+// - Variables repetidas
 // - LocalReferences fuera de scope
 // - FullyQualifiedReferences no en el ambiente
 // - Nadie tiene dos children con el mismo nombre
+// - Todas las expresiones FQR son a Singletons
+// - Ninguna variable o nombre se llama como una palabra reservada.
+// - Override overridea y no se overridea sin override.
+// - Linearización de atributos.
+// - No se instancian clases abstractas
+// - re-assignments to const
 

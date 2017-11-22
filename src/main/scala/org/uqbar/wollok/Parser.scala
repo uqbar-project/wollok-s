@@ -81,7 +81,7 @@ protected trait Parser extends RegexParsers {
   protected lazy val mixinDef: Parser[Mixin] = "mixin" ~> name ~ block(moduleMember)
   protected def singletonDef(named: Boolean): Parser[Singleton] = "object" ~> (if (named) name else "") ~ ("inherits" ~> fullyQualifiedReference ~ arguments.?*).? ~ mixinInclusion.?* ~ block(moduleMember)
 
-  private lazy val mixinInclusion: Parser[Seq[FullyQualifiedReference]] = "mixed with" ~> (fullyQualifiedReference +~ ("and" | ","))
+  private lazy val mixinInclusion: Parser[Seq[FullyQualifiedReference]] = "mixed with" ~> (fullyQualifiedReference +~ ("and" | ",")) ^^ { _.reverse }
 
   //──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   // MODULE MEMBERS
