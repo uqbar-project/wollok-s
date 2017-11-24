@@ -6,7 +6,8 @@ import org.uqbar.wollok.model.Package
 
 object Linker {
 
-  def apply(packages: Package*): Environment = {
+  def apply(packages: Package*): Environment = apply(Environment(), packages: _*)
+  def apply(baseEnvironment: Environment, packages: Package*): Environment = {
     def mergeInto(members: Seq[Member[Package]], isolated: Package): Seq[Member[Package]] = members
       .collectFirst { case p: Package if p.name == isolated.name => p }
       .fold(isolated +: members) { e =>
@@ -16,7 +17,7 @@ object Linker {
         }
       }
 
-    Environment((Seq[Member[Package]]() /: packages)(mergeInto))
+    Environment((Seq[Member[Package]]() /: (baseEnvironment.members.map{ _.asInstanceOf[Package] } ++ packages))(mergeInto))
   }
 
 }

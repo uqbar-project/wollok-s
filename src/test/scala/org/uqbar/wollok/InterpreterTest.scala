@@ -17,6 +17,7 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
     Class("Boolean"),
     Class("String"),
     Class("Null"),
+    Class("StackOverflowException"),
     Class("Object", members = Constructor() :: Nil)
   ))
 
@@ -95,7 +96,14 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
       }
     }
 
-    "throw" - {
+    "try-catch-always / throw" - {
+
+      implicit val environment = Environment(List(
+        wre,
+        Package("p", Nil, List(
+          Class("E")
+        ))
+      ))
 
       "should interpret non-failing tries with catches and no always clauses to be the try body result, ignoring catches" in {
         Seq(
@@ -108,98 +116,155 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
             ))
           )),
           LocalReference("x")
+        ) should beSequentiallyInterpretedTo (7)
+      }
+
+      "should interpret non-failing tries with catches and always clauses to be the body result after executing the always body, ignoring catches" in {
+        Seq(
+          Variable("x", false, Some(Literal(0))),
+          Variable("y", false, Some(Literal(0))),
+          Try(List(
+            Assignment(LocalReference("x"), Literal(7))
+          ), List(
+            Catch(Parameter("e"), None, List(
+              Assignment(LocalReference("y"), Literal(1))
+            ))
+          ), List(
+            Assignment(LocalReference("y"), LocalReference("x"))
+          )),
+          LocalReference("y")
+        ) should beSequentiallyInterpretedTo (7)
+      }
+
+      "should interpret non-failing tries with no catches and always clauses to be the body result after executing the always body" in {
+        Seq(
+          Variable("x", false, Some(Literal(0))),
+          Variable("y", false, Some(Literal(0))),
+          Try(
+            List(
+              Assignment(LocalReference("x"), Literal(7))
+            ), Nil, List(
+              Assignment(LocalReference("y"), LocalReference("x"))
+            )
+          ),
+          LocalReference("y")
+        ) should beSequentiallyInterpretedTo (7)
+      }
+
+      "should interpret failing tries with matching catch and no always clauses to be the catch result, ignoring try body after error" in {
+        Seq(
+          Variable("x", false, Some(Literal(0))),
+          Variable("y", false, Some(Literal(1))),
+          Try(
+            List(
+              Throw(New("p.E")),
+              Assignment(LocalReference("x"), Literal(2)),
+              Assignment(LocalReference("y"), Literal(2))
+            ), List(
+              Catch(Parameter("e"), None, List(
+                Assignment(LocalReference("y"), LocalReference("x"))
+              ))
+            )
+          ),
+          LocalReference("y")
+        ) should beSequentiallyInterpretedTo (0)
+      }
+
+      "should interpret failing tries, preserving changes before the error" in {
+        Seq(
+          Variable("x", false, Some(Literal(0))),
+          Variable("y", false, Some(Literal(0))),
+          Try(
+            List(
+              Assignment(LocalReference("x"), Literal(1)),
+              Throw(New("p.E")),
+              Assignment(LocalReference("x"), Literal(2))
+            ), List(
+              Catch(Parameter("e"), None, List(
+                Assignment(LocalReference("y"), LocalReference("x"))
+              ))
+            )
+          ),
+          LocalReference("y")
         ) should beSequentiallyInterpretedTo (1)
       }
 
-      /*
-      it('should interpret non-failing tries with catches and always clauses to be the always body result after executing the try body, ignoring catches', () => {
-        expectInterpretationOfExpressions(
-          VariableDeclaration('x', true, Literal(0)),
-          Try(Assignment(Reference('x'), Literal(7)))(Catch(Parameter('e'))(Assignment(Reference('x'), Literal(1))))(Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))),
-          Reference('x')
-        ).to.have.property('$inner', 8)
-      })
-
-      it('should interpret non-failing tries with no catches and always clauses to be the always body result after executing the try body', () => {
-        expectInterpretationOfExpressions(
-          VariableDeclaration('x', true, Literal(0)),
-          Try(Assignment(Reference('x'), Literal(7)))()(Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))),
-          Reference('x')
-        ).to.have.property('$inner', 8)
-      })
-
-      it('should interpret failing tries with matching catch and no always clauses to be the catch result, ignoring try body after error', () => {
-        expectInterpretationOfExpressions(
-          VariableDeclaration('x', true, Literal(0)),
-          Try(Throw(New(Reference('Exception'))()), Assignment(Reference('x'), Literal(7)))(Catch(Parameter('e'))(Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))))(),
-          Reference('x')
-        ).to.have.property('$inner', 1)
-      })
-
-      it('should interpret failing tries with matching catch and always clauses to be the catch result, ignoring try body after error but after executing the always', () => {
-        expectInterpretationOfExpressions(
-          VariableDeclaration('x', true, Literal(0)),
-          Try(Throw(New(Reference('Exception'))()), Assignment(Reference('x'), Literal(7)))(Catch(Parameter('e'))(Assignment(Reference('x'), Send(Reference('x'), '*')(Literal(2)))))(Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))),
-          Reference('x')
-        ).to.have.property('$inner', 2)
-      })
-
-      it('should interpret failing tries with no catches and always clauses to propagate the error, ignoring try body after error but after executing the always', () => {
-        expectInterpretationOfExpressions(
-          VariableDeclaration('x', true, Literal(0)),
+      "should interpret failing tries with matching catch and always clauses to be the catch result, ignoring try body after error but after executing the always" in {
+        Seq(
+          Variable("x", false, Some(Literal(0))),
+          Variable("y", false, Some(Literal(1))),
           Try(
-            Try(
-              Throw(New(Reference('Exception'))()), Assignment(Reference('x'), Literal(7))
-            )(
-            )(
-              Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))
-            ),
-          )(
-            Catch(Parameter('e'))(
-              Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))
+            List(
+              Throw(New("p.E")),
+              Assignment(LocalReference("x"), Literal(2)),
+              Assignment(LocalReference("y"), Literal(2))
+            ), List(
+              Catch(Parameter("e"), None, List(
+                Assignment(LocalReference("x"), Literal(3))
+              ))
+            ), List (
+              Assignment(LocalReference("y"), LocalReference("x"))
             )
-          )(
           ),
-          Reference('x')
-        ).to.have.property('$inner', 2)
-      })
+          LocalReference("y")
+        ) should beSequentiallyInterpretedTo (3)
+      }
 
-      it('should interpret failing tries with no matching catches to propagate the error, ignoring try body after error', () => {
-        expectInterpretationOfExpressions(
-          VariableDeclaration('x', true, Literal(0)),
-          Try(
+      "should interpret failing tries with no matching catches and always clauses to propagate the error, ignoring try body after error but after executing the always" in {
+        Seq(
+          Variable("x", false, Some(Literal(0))),
+          Variable("y", false, Some(Literal(0))),
+          Try(List(
             Try(
-              Throw(New(Reference('Exception'))()),
-              Assignment(Reference('x'), Literal(7))
-            )(
-              Catch(Parameter('e'), Reference('StackOverflowException'))(
-                Assignment(Reference('x'), Literal(5))
+              List(
+                Assignment(LocalReference("x"), Literal(1)),
+                Throw(New("p.E")),
+                Assignment(LocalReference("x"), Literal(2))
+              ), Nil, List (
+                Assignment(LocalReference("y"), LocalReference("x"))
               )
-            )(
             )
-          )(
-            Catch(Parameter('e'))(
-              Assignment(Reference('x'), Send(Reference('x'), '+')(Literal(1)))
+          ), List(
+            Catch(Parameter("e"), None, Nil)
+          )),
+          LocalReference("y")
+        ) should beSequentiallyInterpretedTo (1)
+      }
+
+      "should interpret failing tries with no matching catches to propagate the error, ignoring try body after error" in {
+        Seq(
+          Variable("x", false, Some(Literal(0))),
+          Try(List(
+            Try(
+              List(
+                Assignment(LocalReference("x"), Literal(1)),
+                Throw(New("p.E")),
+                Assignment(LocalReference("x"), Literal(2))
+              ), List (
+                Catch(Parameter("e"), Some("wollok.StackOverflowException"), Nil)
+              )
             )
-          )(
-          ),
-          Reference('x')
-        ).to.have.property('$inner', 1)
-      })
+          ), List(
+            Catch(Parameter("e"), None, Nil)
+          )),
+          LocalReference("x")
+        ) should beSequentiallyInterpretedTo (1)
+      }
 
-      it('should interpret failing tries with multiple matching catches to the result of the first one, ignoring try body after error', () => {
-        expectInterpretationOfExpressions(
-          VariableDeclaration('x'),
-          Try(Throw(New(Reference('Exception'))()), Assignment(Reference('x'), Literal(7)))(
-            Catch(Parameter('e'), Reference('StackOverflowException'))(Assignment(Reference('x'), Literal(5))),
-            Catch(Parameter('e'), Reference('Exception'))(Assignment(Reference('x'), Literal(2))),
-            Catch(Parameter('e'))(Assignment(Reference('x'), Literal(6)))
-          )(),
-          Reference('x')
-        ).to.have.property('$inner', 2)
-      })
+        "should interpret failing tries with multiple matching catches to the result of the first one, ignoring try body after error" in {
+        Seq(
+            Try(
+              List(
+                Throw(New("p.E")),
+              ), List (
+                Catch(Parameter("e"), Some("wollok.StackOverflowException"), List( Literal(1) )),
+                Catch(Parameter("e"), Some("p.E"), List( Literal(2) )),
+                Catch(Parameter("e"), None, List( Literal(3) ))
+              )
+            )
+        ) should beSequentiallyInterpretedTo (2)
+      }
 
-       * */
     }
 
     /*
@@ -548,7 +613,7 @@ trait InterpreterMatchers extends Matchers {
 
   case class beInterpretedTo(expected: Object)(implicit environment: Environment) extends Matcher[Expression] {
     def apply(target: Expression) = {
-      val result = new Interpreter()(environment).evalExpression(target)
+      val result = new InteractiveInterpreter(environment).eval(target)
 
       MatchResult(
         result.isSuccess && result.get == expected,
@@ -560,12 +625,12 @@ trait InterpreterMatchers extends Matchers {
 
   case class beSequentiallyInterpretedTo(expected: Object)(implicit environment: Environment) extends Matcher[Seq[Sentence]] {
     def apply(target: Seq[Sentence]) = {
-      val result = new Interpreter()(environment).exec(target)(Frame() :: Nil)
+      val result = new InteractiveInterpreter(environment).eval(target)
 
       MatchResult(
-        result.isSuccess && result.get._1 == expected,
-        if (result.isSuccess) s"Interpreted result ${result.get._1} did not equal $expected" else s"execution failed: ${result}",
-        if (result.isSuccess) s"Interpreted result ${result.get._1} was equal to $expected" else s"execution failed: ${result}"
+        result.isSuccess && result.get == expected,
+        if (result.isSuccess) s"Interpreted result ${result.get} did not equal $expected" else s"execution failed: ${result}",
+        if (result.isSuccess) s"Interpreted result ${result.get} was equal to $expected" else s"execution failed: ${result}"
       )
     }
   }
