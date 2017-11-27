@@ -7,7 +7,7 @@ object model {
   type Name = String
 
   sealed trait Node {
-    val id = Id.next
+    lazy val id = Id.next
 
     def parent(implicit environment: Environment): Option[Node] = environment.parenthood.get(id) map { parentId => environment[Node](parentId) }
     def scope(implicit environment: Environment): Map[Name, Node] = environment.scopes(id).mapValues { id => environment[Node](id) }
@@ -79,20 +79,23 @@ object model {
   sealed trait Module extends Member[Package] with Referenceable { def members: Seq[Member[this.type]] }
   sealed trait Sentence extends Node
   sealed trait Expression extends Sentence
+  //TODO: Reference[T]
   sealed trait Reference extends Expression { def target(implicit environment: Environment): Node }
 
   case class Import(reference: FullyQualifiedReference, isGeneric: Boolean = false) extends Node
   case class Parameter(name: Name, hasVariableLength: Boolean = false) extends Referenceable
 
   case class LocalReference(name: Name) extends Reference {
-    def target(implicit environment: Environment): Node = scope.apply(this.name)
+    def target(implicit environment: Environment): Node = scope.get(name) getOrElse { throw new RuntimeException(s"Reference to missing local $name") }
   }
 
-  object FullyQualifiedReference {
-    implicit def fromString(s: String) = FullyQualifiedReference(s.split('.').toList)
-  }
   case class FullyQualifiedReference(name: Seq[Name]) extends Reference {
-    def target(implicit environment: Environment): Node = environment(this)
+    def target(implicit environment: Environment): Node = (scope.get(name.head) /: name.tail) {
+      case (parent, step) => for {
+        parent <- parent
+        child <- parent.children.collectFirst { case child: Referenceable if child.name == step => child }
+      } yield child
+    } getOrElse { throw new RuntimeException(s"Reference to missing module ${name.mkString(".")}") }
   }
 
   case class Package(name: Name, imports: Seq[Import] = Nil, members: Seq[Member[Package]] = Nil) extends Member[Package] with Referenceable
@@ -141,11 +144,8 @@ object model {
     implicit val self = this
 
     def apply[T <: Node](id: Id) = cache(id).asInstanceOf[T]
-    def apply[T <: Node](fqr: FullyQualifiedReference) = ((this: Node) /: fqr.name) {
-      case (parent, step) => parent.children.collectFirst { case child: Referenceable if child.name == step => child } getOrElse {
-        throw new RuntimeException(s"Reference to missing module ${fqr.name.mkString(".")}")
-      }
-    }.asInstanceOf[T]
+    def apply[T <: Node](fqr: FullyQualifiedReference) = fqr.target.asInstanceOf[T]
+    def apply[T <: Node](fqr: String) = ((this: Node) /: fqr.split('.')){ case (parent, step) => parent.children.collectFirst { case c: Referenceable if c.name == step => c }.get }.asInstanceOf[T]
 
     lazy val cache: Map[Id, Node] = {
       def entries(node: Node): Seq[(Id, Node)] = (node.id -> node) +: node.children.flatMap(entries)
@@ -194,4 +194,4 @@ object model {
 // - Linearización de atributos.
 // - No se instancian clases abstractas
 // - re-assignments to const
-
+// - No hay super en el constructor

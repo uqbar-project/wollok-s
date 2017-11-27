@@ -1,5 +1,6 @@
 package org.uqbar.wollok
 
+import scala.language.implicitConversions
 import scala.util.parsing.input.CharSequenceReader
 
 import org.scalatest.FreeSpec
@@ -11,6 +12,8 @@ import model._
 import scala.util.parsing.combinator.Parsers
 
 class ParserTest extends FreeSpec with Parser with ParserMatchers[Parser] {
+
+  implicit def FQR(s: String): FullyQualifiedReference = FullyQualifiedReference(s.split('.').toList)
 
   "Wollok parser" - {
 

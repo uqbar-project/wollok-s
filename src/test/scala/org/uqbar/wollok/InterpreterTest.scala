@@ -21,14 +21,44 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
     Class("Object", members = Constructor() :: Nil)
   ))
 
+  implicit def FQR(s: String): FullyQualifiedReference = FullyQualifiedReference(s.split('.').toList)
+
   "Wollok interpreter" - {
 
     implicit val environment = Environment(wre :: Nil)
 
-    "literal" - {
+    "literals" - {
 
       "should interpret boolean literals as Wollok Booleans" in {
-        Literal(true) should beInterpretedTo (true)
+        val x = Literal(true)
+        val i = new InteractiveInterpreter(environment)
+
+        implicit var xenvironment = Linker(
+          environment,
+          Package("$interpreter", Nil, List(
+            Singleton("$instance", members = List(
+              Method("history", body = Some(Nil))
+            ))
+          ))
+        )
+
+        def history = xenvironment[Singleton]("$interpreter.$instance").members.collectFirst{ case Method("history", _, _, Nil, Some(body)) => body }
+
+        val g = xenvironment[Singleton]("$interpreter.$instance") // EL FQR CREADO POR EL IMPLICIT NO ESTÁ LINKEADO, ASÍ QUE NO TIENE SCOPE, CACHE NI TARGET!!!
+        val h = history map { _ :+ x }
+        val v = List(
+          Singleton("$instance", members = List(
+            Method("history", body = h)
+          ))
+        )
+        val p = Package("$interpreter", Nil, v)
+
+        Linker(xenvironment, p)
+
+        i(x)
+
+
+//        Literal(true) should beInterpretedTo (true)
       }
 
       "should interpret string literals as Wollok Strings" in {
@@ -69,7 +99,7 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
 
     }
 
-    "if" - {
+    "if-else" - {
 
       "with truthy condition should evaluate it's then-body without evaluating it's else-body" in {
         val expression = If(Literal(true), Literal(1) :: Nil, Throw(New("Error")) :: Nil)
@@ -251,7 +281,7 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
         ) should beSequentiallyInterpretedTo (1)
       }
 
-        "should interpret failing tries with multiple matching catches to the result of the first one, ignoring try body after error" in {
+      "should interpret failing tries with multiple matching catches to the result of the first one, ignoring try body after error" in {
         Seq(
             Try(
               List(
@@ -267,11 +297,74 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
 
     }
 
+    "classes" -{
+
+      "should provide instances with their methods" in {
+        implicit val environment = Environment(List(
+          wre,
+          Package("p", Nil, List(
+            Class("C", members = List(
+                Method("m", body = Some(List(Literal(5))))
+            ))
+          ))
+        ))
+
+        Send(New("p.C"), "m") should beInterpretedTo (5)
+      }
+
+      "should provide instances with methods inherited from superclass" in {
+        implicit val environment = Environment(List(
+          wre,
+          Package("p", Nil, List(
+            Class("C", members = List(
+                Method("m", body = Some(List(Literal(5))))
+            )),
+            Class("D", Some("C")),
+            Class("E", Some("D"))
+          ))
+        ))
+
+        Send(New("p.E"), "m") should beInterpretedTo (5)
+
+      }
+
+      "should provide instances with methods inherited from mixins" //TODO
+
+      "should provide instances with their fields" in {
+    	  implicit val environment = Environment(List(
+    			  wre,
+    			  Package("p", Nil, List(
+    					  Class("C", members = List(
+    							  Field("f", true, Some(Literal(5))),
+    							  Method("m", body = Some(List(LocalReference("f"))))
+    						))
+    				))
+    		))
+
+    		Send(New("p.C"), "m") should beInterpretedTo (5)
+      }
+
+      "should provide instances with fields inherited from superclass" //TODO
+
+      "should provide instances with fields inherited from mixins" //TODO
+
+      "should create initialized instances" //TODO
+
+    }
+
+    "singletons" -{} //TODO
+
+    "mixins" -{} //TODO
+
+    "programs" -{} //TODO
+
+    "tests" -{} //TODO
+
+
     /*
 
   describe('Classes', () => {
 
-    it('should provide instances with their methods', () => {
       const e = link(wre,
         Package('p')(
           Class('C')()(
@@ -613,7 +706,7 @@ trait InterpreterMatchers extends Matchers {
 
   case class beInterpretedTo(expected: Object)(implicit environment: Environment) extends Matcher[Expression] {
     def apply(target: Expression) = {
-      val result = new InteractiveInterpreter(environment).eval(target)
+      val result = new InteractiveInterpreter(environment)(target)
 
       MatchResult(
         result.isSuccess && result.get == expected,
@@ -625,7 +718,7 @@ trait InterpreterMatchers extends Matchers {
 
   case class beSequentiallyInterpretedTo(expected: Object)(implicit environment: Environment) extends Matcher[Seq[Sentence]] {
     def apply(target: Seq[Sentence]) = {
-      val result = new InteractiveInterpreter(environment).eval(target)
+      val result = new InteractiveInterpreter(environment)(target)
 
       MatchResult(
         result.isSuccess && result.get == expected,

@@ -299,8 +299,8 @@ protected trait Parser extends RegexParsers {
   }
 
   private implicit def buildCollection(p: Parser[String ~ List[Expression]]): Parser[New] = p ^^ {
-    case "#{" ~ elements => New("wollok.Set", elements)
-    case _ ~ elements    => New("wollok.List", elements)
+    case "#{" ~ elements => New(FullyQualifiedReference("wollok" :: "Set" :: Nil), elements)
+    case _ ~ elements    => New(FullyQualifiedReference("wollok" :: "List" :: Nil), elements)
   }
 
 }

@@ -95,9 +95,20 @@ class LinkerTest extends FreeSpec with Matchers {
       }
 
       "fully qualified references should target the global element they reference" in {
-        val r: FullyQualifiedReference = "q.S"
+        val r = FullyQualifiedReference("q" :: "S" :: Nil)
         val m = Method("m", body = Some(r :: Nil))
-        val s = Class("S", members = m :: Nil)
+        val s = Singleton("S", members = m :: Nil)
+        val q = Package("q", members = s :: Nil)
+        implicit val environment = Linker(q)
+
+        r.scope.get("q") should be(Some(q))
+        //r.target should be(s)
+      }
+
+      "fully qualified references should target the relative element they reference" in {
+        val r = FullyQualifiedReference("S" :: Nil)
+        val m = Method("m", body = Some(r :: Nil))
+        val s = Singleton("S", members = m :: Nil)
         val q = Package("q", members = s :: Nil)
         implicit val environment = Linker(q)
 
