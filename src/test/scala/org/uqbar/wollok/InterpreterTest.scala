@@ -1,12 +1,9 @@
 package org.uqbar.wollok
 
-import org.scalatest.FreeSpec
-import org.scalatest.Matchers
+import org.scalatest.{FreeSpec, Matchers}
+import org.scalatest.matchers.{MatchResult, Matcher}
+import org.uqbar.wollok.model._
 
-import model._
-import org.scalatest.matchers.Matcher
-import org.scalatest.matchers.MatchResult
-import org.uqbar.wollok._
 import scala.language.implicitConversions
 
 class InterpreterTest extends FreeSpec with InterpreterMatchers {
@@ -25,66 +22,38 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
 
   "Wollok interpreter" - {
 
-    implicit val environment = Environment(wre :: Nil)
+    implicit val environment: Environment = Environment(wre :: Nil)
 
     "literals" - {
 
       "should interpret boolean literals as Wollok Booleans" in {
-        val x = Literal(true)
-        val i = new InteractiveInterpreter(environment)
-
-        implicit var xenvironment = Linker(
-          environment,
-          Package("$interpreter", Nil, List(
-            Singleton("$instance", members = List(
-              Method("history", body = Some(Nil))
-            ))
-          ))
-        )
-
-        def history = xenvironment[Singleton]("$interpreter.$instance").members.collectFirst{ case Method("history", _, _, Nil, Some(body)) => body }
-
-        val g = xenvironment[Singleton]("$interpreter.$instance") // EL FQR CREADO POR EL IMPLICIT NO ESTÁ LINKEADO, ASÍ QUE NO TIENE SCOPE, CACHE NI TARGET!!!
-        val h = history map { _ :+ x }
-        val v = List(
-          Singleton("$instance", members = List(
-            Method("history", body = h)
-          ))
-        )
-        val p = Package("$interpreter", Nil, v)
-
-        Linker(xenvironment, p)
-
-        i(x)
-
-
-//        Literal(true) should beInterpretedTo (true)
+        Literal(true) should beInterpretedTo(true)
       }
 
       "should interpret string literals as Wollok Strings" in {
-        Literal("foo") should beInterpretedTo ("foo")
+        Literal("foo") should beInterpretedTo("foo")
       }
 
       "should interpret null literals as Wollok Null" in {
-        Literal(null) should beInterpretedTo (toObject(null))
+        Literal(null) should beInterpretedTo(toObject(null))
       }
 
       "should interpret round number literals as Wollok Integers" in {
-        Literal(1) should beInterpretedTo (1)
+        Literal(1) should beInterpretedTo(1)
       }
 
       "should interpret non-round number literals as Wollok Doubles" in {
-        Literal(1.0) should beInterpretedTo (1.0)
+        Literal(1.0) should beInterpretedTo(1.0)
       }
 
       "should interpret object literals as initialized instances" in {
 
-        implicit val environment = Environment(List(
+        implicit val environment: Environment = Environment(List(
           wre,
           Package("p", Nil, List(
             Class("C", members = List(
-              Field("g", false, Some(Literal(2))),
-              Field("h", true, None),
+              Field("g", isReadOnly = false, Some(Literal(2))),
+              Field("h", isReadOnly = true, None),
               Constructor(Parameter("_h") :: Nil, body = Some(List(
                 Assignment(LocalReference("h"), LocalReference("_h"))
               )))
@@ -92,9 +61,11 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
           ))
         ))
 
-        val singleton = Singleton("", Some("p.C", Literal(3) :: Nil), Nil, Field("f", true, Some(Literal(1))) :: Nil)
+        val singleton = Singleton("", Some("p.C", Literal(3) :: Nil), Nil, Field("f", isReadOnly = true, Some(Literal(1))) :: Nil)
 
-        Literal(singleton) should beInterpretedTo (Object(singleton, Map("f" -> 1, "g" -> 2, "h" -> 3), None))
+
+
+        Literal(singleton) should beInterpretedTo(Object(singleton, Map("f" -> 1, "g" -> 2, "h" -> 3), None))
       }
 
     }
@@ -103,12 +74,12 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
 
       "with truthy condition should evaluate it's then-body without evaluating it's else-body" in {
         val expression = If(Literal(true), Literal(1) :: Nil, Throw(New("Error")) :: Nil)
-        expression should beInterpretedTo (1)
+        expression should beInterpretedTo(1)
       }
 
       "with falsy condition should evaluate it's else-body without evaluating it's then-body" in {
         val expression = If(Literal(false), Throw(New("Error")) :: Nil, Literal(1) :: Nil)
-        expression should beInterpretedTo (1)
+        expression should beInterpretedTo(1)
       }
 
     }
@@ -118,17 +89,17 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
       "should change mutable local reference's value" in {
 
         Seq(
-          Variable("x", false, Some(Literal(0))),
+          Variable("x", isReadOnly = false, Some(Literal(0))),
           Assignment(LocalReference("x"), Literal(1)),
           LocalReference("x")
-        ) should beSequentiallyInterpretedTo (1)
+        ) should beSequentiallyInterpretedTo(1)
 
       }
     }
 
     "try-catch-always / throw" - {
 
-      implicit val environment = Environment(List(
+      implicit val environment: Environment = Environment(List(
         wre,
         Package("p", Nil, List(
           Class("E")
@@ -137,7 +108,7 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
 
       "should interpret non-failing tries with catches and no always clauses to be the try body result, ignoring catches" in {
         Seq(
-          Variable("x", false, Some(Literal(0))),
+          Variable("x", isReadOnly = false, Some(Literal(0))),
           Try(List(
             Assignment(LocalReference("x"), Literal(7))
           ), List(
@@ -146,13 +117,13 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
             ))
           )),
           LocalReference("x")
-        ) should beSequentiallyInterpretedTo (7)
+        ) should beSequentiallyInterpretedTo(7)
       }
 
       "should interpret non-failing tries with catches and always clauses to be the body result after executing the always body, ignoring catches" in {
         Seq(
-          Variable("x", false, Some(Literal(0))),
-          Variable("y", false, Some(Literal(0))),
+          Variable("x", isReadOnly = false, Some(Literal(0))),
+          Variable("y", isReadOnly = false, Some(Literal(0))),
           Try(List(
             Assignment(LocalReference("x"), Literal(7))
           ), List(
@@ -163,13 +134,13 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
             Assignment(LocalReference("y"), LocalReference("x"))
           )),
           LocalReference("y")
-        ) should beSequentiallyInterpretedTo (7)
+        ) should beSequentiallyInterpretedTo(7)
       }
 
       "should interpret non-failing tries with no catches and always clauses to be the body result after executing the always body" in {
         Seq(
-          Variable("x", false, Some(Literal(0))),
-          Variable("y", false, Some(Literal(0))),
+          Variable("x", isReadOnly = false, Some(Literal(0))),
+          Variable("y", isReadOnly = false, Some(Literal(0))),
           Try(
             List(
               Assignment(LocalReference("x"), Literal(7))
@@ -178,13 +149,13 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
             )
           ),
           LocalReference("y")
-        ) should beSequentiallyInterpretedTo (7)
+        ) should beSequentiallyInterpretedTo(7)
       }
 
       "should interpret failing tries with matching catch and no always clauses to be the catch result, ignoring try body after error" in {
         Seq(
-          Variable("x", false, Some(Literal(0))),
-          Variable("y", false, Some(Literal(1))),
+          Variable("x", isReadOnly = false, Some(Literal(0))),
+          Variable("y", isReadOnly = false, Some(Literal(1))),
           Try(
             List(
               Throw(New("p.E")),
@@ -197,13 +168,13 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
             )
           ),
           LocalReference("y")
-        ) should beSequentiallyInterpretedTo (0)
+        ) should beSequentiallyInterpretedTo(0)
       }
 
       "should interpret failing tries, preserving changes before the error" in {
         Seq(
-          Variable("x", false, Some(Literal(0))),
-          Variable("y", false, Some(Literal(0))),
+          Variable("x", isReadOnly = false, Some(Literal(0))),
+          Variable("y", isReadOnly = false, Some(Literal(0))),
           Try(
             List(
               Assignment(LocalReference("x"), Literal(1)),
@@ -216,13 +187,13 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
             )
           ),
           LocalReference("y")
-        ) should beSequentiallyInterpretedTo (1)
+        ) should beSequentiallyInterpretedTo(1)
       }
 
       "should interpret failing tries with matching catch and always clauses to be the catch result, ignoring try body after error but after executing the always" in {
         Seq(
-          Variable("x", false, Some(Literal(0))),
-          Variable("y", false, Some(Literal(1))),
+          Variable("x", isReadOnly = false, Some(Literal(0))),
+          Variable("y", isReadOnly = false, Some(Literal(1))),
           Try(
             List(
               Throw(New("p.E")),
@@ -232,25 +203,25 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
               Catch(Parameter("e"), None, List(
                 Assignment(LocalReference("x"), Literal(3))
               ))
-            ), List (
+            ), List(
               Assignment(LocalReference("y"), LocalReference("x"))
             )
           ),
           LocalReference("y")
-        ) should beSequentiallyInterpretedTo (3)
+        ) should beSequentiallyInterpretedTo(3)
       }
 
       "should interpret failing tries with no matching catches and always clauses to propagate the error, ignoring try body after error but after executing the always" in {
         Seq(
-          Variable("x", false, Some(Literal(0))),
-          Variable("y", false, Some(Literal(0))),
+          Variable("x", isReadOnly = false, Some(Literal(0))),
+          Variable("y", isReadOnly = false, Some(Literal(0))),
           Try(List(
             Try(
               List(
                 Assignment(LocalReference("x"), Literal(1)),
                 Throw(New("p.E")),
                 Assignment(LocalReference("x"), Literal(2))
-              ), Nil, List (
+              ), Nil, List(
                 Assignment(LocalReference("y"), LocalReference("x"))
               )
             )
@@ -258,19 +229,19 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
             Catch(Parameter("e"), None, Nil)
           )),
           LocalReference("y")
-        ) should beSequentiallyInterpretedTo (1)
+        ) should beSequentiallyInterpretedTo(1)
       }
 
       "should interpret failing tries with no matching catches to propagate the error, ignoring try body after error" in {
         Seq(
-          Variable("x", false, Some(Literal(0))),
+          Variable("x", isReadOnly = false, Some(Literal(0))),
           Try(List(
             Try(
               List(
                 Assignment(LocalReference("x"), Literal(1)),
                 Throw(New("p.E")),
                 Assignment(LocalReference("x"), Literal(2))
-              ), List (
+              ), List(
                 Catch(Parameter("e"), Some("wollok.StackOverflowException"), Nil)
               )
             )
@@ -278,87 +249,127 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
             Catch(Parameter("e"), None, Nil)
           )),
           LocalReference("x")
-        ) should beSequentiallyInterpretedTo (1)
+        ) should beSequentiallyInterpretedTo(1)
       }
 
       "should interpret failing tries with multiple matching catches to the result of the first one, ignoring try body after error" in {
         Seq(
-            Try(
-              List(
-                Throw(New("p.E")),
-              ), List (
-                Catch(Parameter("e"), Some("wollok.StackOverflowException"), List( Literal(1) )),
-                Catch(Parameter("e"), Some("p.E"), List( Literal(2) )),
-                Catch(Parameter("e"), None, List( Literal(3) ))
-              )
+          Try(
+            List(
+              Throw(New("p.E")),
+            ), List(
+              Catch(Parameter("e"), Some("wollok.StackOverflowException"), List(Literal(1))),
+              Catch(Parameter("e"), Some("p.E"), List(Literal(2))),
+              Catch(Parameter("e"), None, List(Literal(3)))
             )
-        ) should beSequentiallyInterpretedTo (2)
+          )
+        ) should beSequentiallyInterpretedTo(2)
       }
 
     }
 
-    "classes" -{
+    "classes" - {
 
       "should provide instances with their methods" in {
-        implicit val environment = Environment(List(
+        implicit val environment: Environment = Environment(List(
           wre,
           Package("p", Nil, List(
             Class("C", members = List(
-                Method("m", body = Some(List(Literal(5))))
+              Method("m", body = Some(List(Literal(5))))
             ))
           ))
         ))
 
-        Send(New("p.C"), "m") should beInterpretedTo (5)
+        Send(New("p.C"), "m") should beInterpretedTo(5)
       }
 
       "should provide instances with methods inherited from superclass" in {
-        implicit val environment = Environment(List(
+        implicit val environment: Environment = Environment(List(
           wre,
           Package("p", Nil, List(
             Class("C", members = List(
-                Method("m", body = Some(List(Literal(5))))
+              Method("m", body = Some(List(Literal(5))))
             )),
             Class("D", Some("C")),
             Class("E", Some("D"))
           ))
         ))
 
-        Send(New("p.E"), "m") should beInterpretedTo (5)
-
+        Send(New("p.E"), "m") should beInterpretedTo(5)
       }
 
-      "should provide instances with methods inherited from mixins" //TODO
+      "should provide instances with methods inherited from mixins" in {
+        implicit val environment: Environment = Environment(List(
+          wre,
+          Package("p", Nil, List(
+            Mixin("M", members = List(
+              Method("m", body = Some(List(Literal(5))))
+            )),
+            Class("D", None, "M"::Nil)
+          ))
+        ))
+
+        Send(New("p.D"), "m") should beInterpretedTo(5)
+      }
 
       "should provide instances with their fields" in {
-    	  implicit val environment = Environment(List(
-    			  wre,
-    			  Package("p", Nil, List(
-    					  Class("C", members = List(
-    							  Field("f", true, Some(Literal(5))),
-    							  Method("m", body = Some(List(LocalReference("f"))))
-    						))
-    				))
-    		))
+        implicit val environment: Environment = Environment(List(
+          wre,
+          Package("p", Nil, List(
+            Class("C", members = List(
+              Field("f", isReadOnly = true, Some(Literal(5))),
+              Method("m", body = Some(List(LocalReference("f"))))
+            ))
+          ))
+        ))
 
-    		Send(New("p.C"), "m") should beInterpretedTo (5)
+        Send(New("p.C"), "m") should beInterpretedTo(5)
       }
 
-      "should provide instances with fields inherited from superclass" //TODO
+      "should provide instances with fields inherited from superclass" in {
+        implicit val environment: Environment = Environment(List(
+          wre,
+          Package("p", Nil, List(
+            Class("C", members = List(
+              Field("f", isReadOnly = true, Some(Literal(5)))
+            )),
+            Class("D", Some("C")),
+            Class("E", Some("D"), members = List(
+              Method("m", body = Some(List(LocalReference("f"))))
+            ))
+          ))
+        ))
 
-      "should provide instances with fields inherited from mixins" //TODO
+        Send(New("p.E"), "m") should beInterpretedTo(5)
+      }
 
-      "should create initialized instances" //TODO
+      "should provide instances with fields inherited from mixins" in {
+        implicit val environment: Environment = Environment(List(
+          wre,
+          Package("p", Nil, List(
+            Mixin("M", members = List(
+              Field("f", isReadOnly = true, Some(Literal(5)))
+            )),
+            Class("C", mixins = "M" :: Nil, members = List(
+              Method("m", body = Some(List(LocalReference("f"))))
+            ))
+          ))
+        ))
+
+        Send(New("p.C"), "m") should beInterpretedTo(5)
+      }
+
+      "should create initialized instances" in {} //TODO
 
     }
 
-    "singletons" -{} //TODO
+    "singletons" - {} //TODO
 
-    "mixins" -{} //TODO
+    "mixins" - {} //TODO
 
-    "programs" -{} //TODO
+    "programs" - {} //TODO
 
-    "tests" -{} //TODO
+    "tests" - {} //TODO
 
 
     /*
@@ -691,10 +702,10 @@ class InterpreterTest extends FreeSpec with InterpreterMatchers {
 
   implicit def toObject(value: Any)(implicit environment: Environment): Object = value match {
     case value: Boolean => Object(environment[Module]("wollok.Boolean"), Map(), Some(value))
-    case value: Int     => Object(environment[Module]("wollok.Integer"), Map(), Some(value))
-    case value: Double  => Object(environment[Module]("wollok.Double"), Map(), Some(value))
-    case value: String  => Object(environment[Module]("wollok.String"), Map(), Some(value))
-    case null           => Object(environment[Module]("wollok.Null"), Map(), Some(value))
+    case value: Int => Object(environment[Module]("wollok.Integer"), Map(), Some(value))
+    case value: Double => Object(environment[Module]("wollok.Double"), Map(), Some(value))
+    case value: String => Object(environment[Module]("wollok.String"), Map(), Some(value))
+    case null => Object(environment[Module]("wollok.Null"), Map(), Some(value))
   }
 }
 
@@ -706,24 +717,24 @@ trait InterpreterMatchers extends Matchers {
 
   case class beInterpretedTo(expected: Object)(implicit environment: Environment) extends Matcher[Expression] {
     def apply(target: Expression) = {
-      val result = new InteractiveInterpreter(environment)(target)
+      val result = Interpreter(target)
 
       MatchResult(
         result.isSuccess && result.get == expected,
-        if (result.isSuccess) s"Interpreted result ${result.get} did not equal $expected" else s"execution failed: ${result}",
-        if (result.isSuccess) s"Interpreted result ${result.get} was equal to $expected" else s"execution failed: ${result}"
+        if (result.isSuccess) s"Interpreted result ${result.get} did not equal $expected" else s"execution failed: $result",
+        if (result.isSuccess) s"Interpreted result ${result.get} was equal to $expected" else s"execution failed: $result"
       )
     }
   }
 
   case class beSequentiallyInterpretedTo(expected: Object)(implicit environment: Environment) extends Matcher[Seq[Sentence]] {
     def apply(target: Seq[Sentence]) = {
-      val result = new InteractiveInterpreter(environment)(target)
+      val result = Interpreter(target)
 
       MatchResult(
         result.isSuccess && result.get == expected,
-        if (result.isSuccess) s"Interpreted result ${result.get} did not equal $expected" else s"execution failed: ${result}",
-        if (result.isSuccess) s"Interpreted result ${result.get} was equal to $expected" else s"execution failed: ${result}"
+        if (result.isSuccess) s"Interpreted result ${result.get} did not equal $expected" else s"execution failed: $result",
+        if (result.isSuccess) s"Interpreted result ${result.get} was equal to $expected" else s"execution failed: $result"
       )
     }
   }

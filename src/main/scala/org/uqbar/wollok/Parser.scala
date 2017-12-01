@@ -195,7 +195,7 @@ protected trait Parser extends RegexParsers {
   // BUILDERS
   //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
-  private implicit def buildReference(p: Parser[Name]): Parser[LocalReference] = p ^^ { LocalReference(_) }
+  private implicit def buildReference(p: Parser[Name]): Parser[LocalReference] = p ^^ { LocalReference }
 
   private implicit def buildFullyQualifiedReference(p: Parser[List[Name]]): Parser[FullyQualifiedReference] = p ^^ {
     case name => FullyQualifiedReference(name)

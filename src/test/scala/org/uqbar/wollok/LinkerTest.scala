@@ -22,6 +22,9 @@ class LinkerTest extends FreeSpec with Matchers {
       m.parent should be(Some(c))
     }
 
+    val objectClass = Class("Object")
+    val wre = Package("wollok", members= Seq(objectClass))
+
     "scope" - {
 
       "each node should be linked with it's scope" in {
@@ -29,12 +32,12 @@ class LinkerTest extends FreeSpec with Matchers {
         val q = Package("q", members = m :: Nil)
         val c = Class("C")
         val p = Package("p", members = c :: q :: Nil)
-        implicit val environment = Linker(p)
+        implicit val environment = Linker(wre, p)
 
-        p.scope should be (Map("p" -> p))
-        c.scope should be (Map("p" -> p, "C" -> c, "q" -> q))
-        q.scope should be(Map("p" -> p, "C" -> c, "q" -> q))
-        m.scope should be(Map("p" -> p, "C" -> c, "q" -> q, "M" -> m))
+        p.scope should be (Map("wollok" -> wre, "Object" -> objectClass, "p" -> p))
+        c.scope should be (Map("wollok" -> wre, "Object" -> objectClass,"p" -> p, "C" -> c, "q" -> q))
+        q.scope should be(Map("wollok" -> wre, "Object" -> objectClass,"p" -> p, "C" -> c, "q" -> q))
+        m.scope should be(Map("wollok" -> wre, "Object" -> objectClass,"p" -> p, "C" -> c, "q" -> q, "M" -> m))
       }
 
       "non-visible definitions should not be included on scope" in {
@@ -43,13 +46,13 @@ class LinkerTest extends FreeSpec with Matchers {
         val r = Package("r", members = m :: Nil)
         val q = Package("q", members = c :: Nil)
         val p = Package("p", members = q :: r :: Nil)
-        implicit val environment = Linker(p)
+        implicit val environment = Linker(wre, p)
 
-        p.scope should equal (Map("p" -> p))
-        q.scope should be(Map("p" -> p, "q" -> q, "r" -> r))
-        r.scope should be(Map("p" -> p, "q" -> q, "r" -> r))
-        c.scope should be(Map("p" -> p, "q" -> q, "r" -> r, "C" -> c))
-        m.scope should be(Map("p" -> p, "q" -> q, "r" -> r, "M" -> m))
+        p.scope should equal (Map("wollok" -> wre, "Object" -> objectClass,"p" -> p))
+        q.scope should be(Map("wollok" -> wre, "Object" -> objectClass,"p" -> p, "q" -> q, "r" -> r))
+        r.scope should be(Map("wollok" -> wre, "Object" -> objectClass,"p" -> p, "q" -> q, "r" -> r))
+        c.scope should be(Map("wollok" -> wre, "Object" -> objectClass,"p" -> p, "q" -> q, "r" -> r, "C" -> c))
+        m.scope should be(Map("wollok" -> wre, "Object" -> objectClass,"p" -> p, "q" -> q, "r" -> r, "M" -> m))
       }
 
       "outer scope entries should be overrided by inner ones" in {
@@ -64,19 +67,19 @@ class LinkerTest extends FreeSpec with Matchers {
         val f = Field("x", false)
         val s = Singleton("x", members = f :: m1 :: m2 :: Nil)
         val p = Package("x", members = s :: Nil)
-        implicit val environment = Linker(p)
+        implicit val environment = Linker(wre, p)
 
-        p.scope should be (Map("x" -> p))
-        s.scope should be (Map("x" -> s))
-        f.scope should be (Map("x" -> f))
-        m1.scope should be (Map("x" -> f))
-        m1p.scope should be (Map("x" -> m1p))
-        m1c.scope should be (Map("x" -> m1p))
-        m1cp.scope should be (Map("x" -> m1cp))
-        m1cr.scope should be (Map("x" -> m1cp))
-        m2.scope should be (Map("x" -> f))
-        m2v.scope should be (Map("x" -> m2v))
-        m2r.scope should be (Map("x" -> m2v))
+        p.scope.apply("x") should be (p)
+        s.scope.apply("x") should be (s)
+        f.scope.apply("x") should be (f)
+        m1.scope.apply("x") should be (f)
+        m1p.scope.apply("x") should be (m1p)
+        m1c.scope.apply("x") should be (m1p)
+        m1cp.scope.apply("x") should be (m1cp)
+        m1cr.scope.apply("x") should be (m1cp)
+        m2.scope.apply("x") should be (f)
+        m2v.scope.apply("x") should be (m2v)
+        m2r.scope.apply("x") should be (m2v)
       }
 
     }
@@ -89,7 +92,7 @@ class LinkerTest extends FreeSpec with Matchers {
         val m = Method("m", parameters = p :: Nil, body = Some(r :: Nil))
         val c = Class("C", members = m :: Nil)
         val q = Package("q", members = c :: Nil)
-        implicit val environment = Linker(q)
+        implicit val environment = Linker(wre, q)
 
         r.target should be(p)
       }
@@ -99,7 +102,7 @@ class LinkerTest extends FreeSpec with Matchers {
         val m = Method("m", body = Some(r :: Nil))
         val s = Singleton("S", members = m :: Nil)
         val q = Package("q", members = s :: Nil)
-        implicit val environment = Linker(q)
+        implicit val environment = Linker(wre, q)
 
         r.scope.get("q") should be(Some(q))
         //r.target should be(s)
@@ -110,9 +113,24 @@ class LinkerTest extends FreeSpec with Matchers {
         val m = Method("m", body = Some(r :: Nil))
         val s = Singleton("S", members = m :: Nil)
         val q = Package("q", members = s :: Nil)
-        implicit val environment = Linker(q)
+        implicit val environment = Linker(wre, q)
 
         r.target should be(s)
+      }
+
+    }
+
+    "ancestors" - {
+
+      "singleton literals should have ancestors" in {
+        val singletonLiteral = Singleton("")
+        implicit val environment = Linker(wre, Package("p", members = Seq(
+          Singleton("S", members=Seq(
+            Field("f", isReadOnly = false, Some(Literal(singletonLiteral)))
+          ))
+        )))
+
+        singletonLiteral.ancestors should be(singletonLiteral :: environment[Class]("wollok.Object") :: Nil)
       }
 
     }

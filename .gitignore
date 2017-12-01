@@ -2,6 +2,7 @@
 .cache-tests
 .settings/**
 .classpath
+.idea/**
 .project
 .worksheet
 bin

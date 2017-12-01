@@ -2,36 +2,16 @@ package org.uqbar.wollok
 
 import scala.util.{ Try => Result }
 
-import org.uqbar.wollok.model.Assignment
-import org.uqbar.wollok.model.Catch
-import org.uqbar.wollok.model.Class
-import org.uqbar.wollok.model.Constructor
-import org.uqbar.wollok.model.Environment
-import org.uqbar.wollok.model.FullyQualifiedReference
-import org.uqbar.wollok.model.If
-import org.uqbar.wollok.model.Literal
-import org.uqbar.wollok.model.LocalReference
-import org.uqbar.wollok.model.Method
-import org.uqbar.wollok.model.Module
-import org.uqbar.wollok.model.Name
-import org.uqbar.wollok.model.New
-import org.uqbar.wollok.model.Return
-import org.uqbar.wollok.model.Self
-import org.uqbar.wollok.model.Send
-import org.uqbar.wollok.model.Sentence
-import org.uqbar.wollok.model.Singleton
-import org.uqbar.wollok.model.Super
-import org.uqbar.wollok.model.Throw
-import org.uqbar.wollok.model.Try
 import org.uqbar.wollok.model._
-import org.uqbar.wollok.model.Expression
-import scala.util.Success
-import scala.annotation.tailrec
 import scala.util.Failure
 import org.uqbar.wollok.model.Field
 import scala.language.implicitConversions
-import sun.awt.X11.Separator
-import sun.awt.X11.Separator
+
+object Interpreter {
+  def apply(sentences: Seq[Sentence])(implicit environment: Environment): Result[Object] = Execution(environment)(sentences).result.map{_._1}
+  def apply(node: Node)(implicit environment: Environment): Result[Object] = Execution(environment)(node).result.map{_._1}
+  def start(implicit environment: Environment): Execution = Execution(environment)
+}
 
 case class Object(module: Module, fields: Map[Name, Object] = Map(), inner: Option[Any] = None)
 
@@ -40,89 +20,71 @@ case class Frame(locals: Map[Name, Object] = Map(), parent: Option[Frame] = None
     throw new RuntimeException("Frame stack bottom reached")
   }
 
-  def apply(name: Name): Object = locals.get(name) getOrElse previous(name)
+  def apply(name: Name): Object = locals.getOrElse(name, previous(name))
 
   def updated(name: Name, value: Object): Frame =
     if (locals.isDefinedAt(name)) copy(locals.updated(name, value))
     else copy(parent = Some(previous.updated(name, value)))
 }
 
-class InteractiveInterpreter(initialEnvironment: Environment) extends Interpreter {
-  protected implicit var context = Frame()
-  protected implicit var environment = Linker(
-    initialEnvironment,
-    Package("$interpreter", Nil, List(
-      Singleton("$instance", members = List(
-        Method("history", body = Some(Nil))
-      ))
-    ))
-  )
+private case class ExceptionRaised(exception: Object, context: Frame) extends RuntimeException
 
-  def history = environment[Singleton]("$interpreter.$instance").members.collectFirst{ case Method("history", _, _, Nil, Some(body)) => body }
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// EXECUTION
+//══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
-  def apply(sentences: Seq[Sentence]) = {
-    addToHistory(sentences)
-    val result = execBlock(sentences)
-    result foreach { case (_, ctx) => context = ctx }
-    result map { _._1 }
-  }
+case class Execution(environment: Environment, result: Result[(Object,Frame)] = Result(null, Frame()), history: Seq[Sentence] = Seq()) {
 
-  def apply(node: Node) = node match {
-    case node: Package =>
-      environment = Linker(environment, node)
-      Result(nil)
-
-    case node: Module =>
-      environment = Linker(environment, Package("$interpreter", Nil, node :: Nil))
-      Result(nil)
-
-    case node: Sentence =>
-      addToHistory(node :: Nil)
-      val result = exec(node)
-      result foreach { case (_, ctx) => context = ctx }
-      result map { _._1 }
-
-    case _ => throw new RuntimeException(s"Can't evaluate node $node")
-  }
-
-  private def addToHistory(sentences: Seq[Sentence]) {
-    environment = Linker(initialEnvironment, Package("$interpreter", Nil, List(
-      Singleton("$instance", members = List(
-        Method("history", body = history map { _ ++ sentences })
-      ))
-    )))
-  }
-}
-
-trait Interpreter {
-
-  implicit protected def environment: Environment
-
-  private case class ExceptionRaised(exception: Object, context: Frame) extends RuntimeException
-
-  //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  //──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   // WELL KNOWN INSTANCES
-  //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  //──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
   //TODO: Hoisting: What if an object constructor references an unitialized object
-  protected lazy val singletonInstances = {
+  protected lazy val singletonInstances: Seq[(Id, Result[Object])] = {
     def getSingletons(node: Node): Seq[Singleton] = node match {
-      case p: Package                      => p.children.flatMap{ getSingletons(_) }
+      case p: Package                      => p.children flatMap getSingletons
       case s: Singleton if s.name.nonEmpty => Seq(s)
       case _                               => Seq()
     }
 
-    for (singleton <- getSingletons(environment)) yield singleton.id -> initializeSingleton(singleton)
+    for (singleton <- getSingletons(environment)) yield singleton.id -> result.fold(
+      {throw new RuntimeException(s"Could not initialize singletons of failed execution $this")},
+      { case (_,context) => initializeSingleton(singleton)(context, environment)}
+    )
   }
 
-  lazy val nil = Object(environment[Class]("wollok.Null"), Map(), Some(null))
+  protected lazy val nil = Object(environment[Class]("wollok.Null"), Map(), Some(null))
 
-  //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-  // EXECUTION
-  //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  //──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  // PUBLIC INTERFACE
+  //──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  def apply(sentences: Seq[Sentence]):Execution = (this /: sentences){ _ apply _ }
+  def apply(node: Node): Execution = result.fold({_ => this},{ case (_, context) => node match {
+    case node: Package => copy(Linker(environment, node), Result(nil -> context))
+
+    case node: Module => copy(Linker(environment, Package("$interpreter", Nil, node :: Nil)), Result(nil -> context))
+
+    case node: Sentence =>
+      val nextHistory = history :+ node
+      val nextEnvironment = Linker(environment, Package("$interpreter", Nil, List(
+        Singleton("$instance", members = List(
+          Method("history", body = Some(nextHistory))
+        ))
+      )))
+      val nextResult = exec(node)(context, nextEnvironment)
+
+      copy(nextEnvironment, nextResult, nextHistory)
+
+    case _ => throw new RuntimeException(s"Can't evaluate node $node")
+  }})
+
+  //──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  // SENTENCE EXECUTION
+  //──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
   //TODO: TODOS LOS USOS DE ESTO TIENEN QUE SER REEMPLAZADOS POR ALGO QUE NO PIERDA EL EFECTO COLATERAL
-  protected def execAll(expressions: Seq[Expression])(implicit context: Frame): Result[Seq[Object]] = (Result(Seq[Object]()) /: expressions){
+  protected def execAll(expressions: Seq[Expression])(implicit context: Frame, environment: Environment): Result[Seq[Object]] = (Result(Seq[Object]()) /: expressions){
     case (prev, exp) => for {
       responses <- prev
       (next, _) <- exec(exp)
@@ -168,7 +130,7 @@ trait Interpreter {
 
     case Send(receiver, message, arguments) => for {
       rec :: args <- execAll(receiver +: arguments)
-      method = lookup(message, arguments.size, rec.module).get
+      method = rec.module.lookup(message, arguments.size).get
       methodBody = method.body.get //TODO: Natives
       methodLocals = method.parameters.map(_.name).zip(args) :+ ("self" -> rec)
       next <- execBlock(methodBody, methodLocals)
@@ -176,7 +138,7 @@ trait Interpreter {
 
     case call @ Super(arguments) => for {
       args <- execAll(arguments)
-      method = superLookup(arguments.size, call)
+      method = call.target
       methodBody = method.body.get //TODO: Natives
       methodLocals = method.parameters.map(_.name).zip(args)
       next <- execBlock(methodBody, methodLocals)
@@ -189,7 +151,7 @@ trait Interpreter {
 
     case If(condition, thenBody, elseBody) => for {
       (bool, _) <- exec(condition)
-      next <- execBlock(if (bool.inner.exists{ _ == true }) thenBody else elseBody)
+      next <- execBlock(if (bool.inner.contains(true)) thenBody else elseBody)
     } yield next
 
     case Literal(value) =>
@@ -221,63 +183,40 @@ trait Interpreter {
       )
   }
 
-  //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-  // AUXILIARS
-  //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  //──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  // OBJECT INITIALIZATION
+  //──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-  //TODO: Mover esto al ExtendedModule?
-  protected def lookup(message: Name, arguments: Int, module: Module): Option[Method] = module.allMembers.collectFirst {
-    case m: Method if m.parameters.size == arguments || m.parameters.size < arguments && m.parameters.last.hasVariableLength => m
-  }
-  protected def constructorLookup(arguments: Int, module: Module): Option[Constructor] = module.allMembers.collectFirst{
-    case c: Constructor if c.parameters.size == arguments || c.parameters.size < arguments && c.parameters.last.hasVariableLength => c
-  }
-
-  protected def superLookup(arguments: Int, superCall: Super): Method = ???
-
-  protected def initializeInstance(module: Module, arguments: Seq[Object])(implicit context: Frame): Result[Object] = {
-    val initialState: Result[Map[Name, Object]] = module.allMembers.collect{
-      case Field(name, _, Some(value)) => name -> exec(value)(Frame(), environment).map{ _._1 }
+  protected def initializeInstance(module: Module, arguments: Seq[Object])(implicit context: Frame, environment: Environment): Result[Object] = {
+    val initialState: Result[Map[Name, Object]] = {
+      val allMembers = module.allMembers
+      allMembers.collect{
+        case Field(name, _, Some(value)) => name -> exec(value)(Frame(), environment).map{ _._1 }
+      }
     }
 
     for {
       state <- initialState
       instance = Object(module, state)
-      constructor = constructorLookup(arguments.size, instance.module).get
+      constructor = module.constructorLookup(arguments.size).get
       constructorBody = constructor.body.get //TODO: Recursively call parent.
       constructorLocals = constructor.parameters.map(_.name).zip(arguments.reverse) :+ ("self" -> instance)
       (_, ctx) <- execBlock(constructorBody, constructorLocals)
     } yield ctx("self")
   }
 
-  protected def initializeSingleton(singleton: Singleton): Result[Object] = {
-    initializeInstance(singleton, singleton.superclass.map{ _._2.map{ exec(_)(Frame(), environment).map{ _._1 }.get } }.getOrElse(Nil))(Frame())
-  }
+  protected def initializeSingleton(singleton: Singleton)(implicit context: Frame, environment: Environment): Result[Object] =
+    initializeInstance(singleton, singleton.superclass.map{ _._2.map{ exec(_)(Frame(), environment).map{ _._1 }.get } }.getOrElse(Nil))
 
-  //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  //──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   // IMPLICITS
-  //══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  //──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-  implicit def toTryMap[T, U](seq: Seq[(T, Result[U])]): Result[Map[T, U]] = seq.foldLeft(Result(Map[T, U]())){
+  private implicit def toTryMap[T, U](seq: Seq[(T, Result[U])]): Result[Map[T, U]] = seq.foldLeft(Result(Map[T, U]())){
     case (acum, (key, value)) =>
       for {
         acum <- acum
         value <- value
       } yield acum.updated(key, value)
   }
-
-  implicit class RuntimeModule(module: Module)(implicit environment: Environment) {
-    def ancestors: Seq[Module] = {
-      val objectClass = environment[Class]("wollok.Object")
-      module +: (module match {
-        case _: Mixin | `objectClass` => Nil
-        case module: Class            => module.mixins.flatMap{ environment[Mixin](_).ancestors } ++ module.superclass.map{ environment[Class](_) }.getOrElse(objectClass).ancestors
-        case module: Singleton        => module.mixins.flatMap{ environment[Mixin](_).ancestors } ++ module.superclass.map{ s => environment[Class](s._1) }.getOrElse(objectClass).ancestors
-      })
-    }
-
-    // TODO: drop overrided
-    def allMembers = ancestors.flatMap{ _.members: Seq[Member[_ <: Module]] }
-  }
-
 }
